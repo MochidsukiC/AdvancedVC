@@ -1,5 +1,6 @@
 {
   "item.advancedvc.walkie_talkie": "Walkie-Talkie",
+  "item.advancedvc.band_tool": "Band Tool (PA Mixer)",
   "block.advancedvc.microphone": "Microphone",
   "block.advancedvc.speaker": "Speaker",
   "block.advancedvc.soundproof_block": "Soundproof Block",
@@ -11,5 +12,38 @@
   "key.advancedvc.volume_up": "Volume Up",
   "key.advancedvc.volume_down": "Volume Down",
 
-  "itemGroup.advancedvc.advanced_vc_tab": "Advanced VC"
+  "itemGroup.advancedvc.advanced_vc_tab": "Advanced VC",
+
+  "gui.advancedvc.walkie_talkie.title": "Walkie Talkie Settings",
+  "gui.advancedvc.walkie_talkie.frequency": "Frequency:",
+  "gui.advancedvc.walkie_talkie.set": "Set",
+  "gui.advancedvc.walkie_talkie.cancel": "Cancel",
+
+  "gui.advancedvc.speaker.title": "Speaker Settings",
+  "gui.advancedvc.speaker.speaker_pos": "Speaker Position:",
+  "gui.advancedvc.speaker.mic_x": "Mic X:",
+  "gui.advancedvc.speaker.mic_y": "Mic Y:",
+  "gui.advancedvc.speaker.mic_z": "Mic Z:",
+  "gui.advancedvc.speaker.amplification": "Amplification:",
+  "gui.advancedvc.speaker.connect": "Connect",
+  "gui.advancedvc.speaker.disconnect": "Disconnect",
+
+  "gui.advancedvc.band_tool.title": "PA Mixer",
+  "gui.advancedvc.band_tool.volume": "Vol:",
+  "gui.advancedvc.band_tool.compressor": "Comp",
+  "gui.advancedvc.band_tool.eq": "EQ",
+  "gui.advancedvc.band_tool.send": "Send:",
+  "gui.advancedvc.band_tool.session_start": "Start Session",
+  "gui.advancedvc.band_tool.session_end": "End Session",
+  "gui.advancedvc.band_tool.close": "Close",
+
+  "advancedvc.volume.whisper": "Whisper",
+  "advancedvc.volume.quiet": "Quiet",
+  "advancedvc.volume.normal": "Normal",
+  "advancedvc.volume.loud": "Loud",
+  "advancedvc.volume.shout": "Shout",
+
+  "advancedvc.mode.simulation": "Simulation Mode",
+  "advancedvc.mode.device": "Device Mode",
+  "advancedvc.mode.band": "Band Mode"
 }

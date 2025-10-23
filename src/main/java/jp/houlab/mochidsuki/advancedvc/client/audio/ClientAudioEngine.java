@@ -10,7 +10,9 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -30,6 +32,7 @@ public class ClientAudioEngine {
     private OpusCodec.Decoder decoder;
     private AudioPlayer audioPlayer;
     private UDPNetworkManager udpNetwork;
+    private AcousticSimulationEngine acousticSimulation;
 
     // 状態
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -38,6 +41,9 @@ public class ClientAudioEngine {
     private int walkieTalkieFrequency = 0;
     private boolean pttPressed = false;
     private boolean muted = false;
+
+    // プレイヤー位置キャッシュ（音響シミュレーション用）
+    private final Map<UUID, Vec3> playerPositions = new ConcurrentHashMap<>();
 
     // シーケンス番号
     private short sequenceNumber = 0;
@@ -74,6 +80,7 @@ public class ClientAudioEngine {
         decoder = OpusCodec.createDecoder();
         audioPlayer = new AudioPlayer();
         udpNetwork = new UDPNetworkManager(0); // クライアントはランダムポート
+        acousticSimulation = new AcousticSimulationEngine();
 
         // UDP設定
         udpNetwork.setServerAddress(serverHost, serverPort);
@@ -236,20 +243,41 @@ public class ClientAudioEngine {
             // モードに応じた再生
             if (packet.getMode() == VoiceMode.DEVICE) {
                 // デバイスモード: 非ポジショナル再生
-                audioPlayer.addNonPositionalAudio(samples);
-            } else {
-                // シミュレーション/バンドモード: ポジショナル再生
-                Vec3 position;
+                // ウォーキートーキー風の音質劣化を適用
+                short[] filtered = DSPProcessor.applyWalkieTalkieFilter(samples);
+                audioPlayer.addNonPositionalAudio(filtered);
+            } else if (packet.getMode() == VoiceMode.SIMULATION) {
+                // シミュレーションモード: 音響シミュレーション + ポジショナル再生
+                Vec3 sourcePos;
                 if (packet.isFromSpeaker()) {
                     // スピーカーブロックからの音声
-                    position = new Vec3(packet.getSpeakerX(), packet.getSpeakerY(), packet.getSpeakerZ());
+                    sourcePos = new Vec3(packet.getSpeakerX(), packet.getSpeakerY(), packet.getSpeakerZ());
                 } else {
-                    // プレイヤーからの音声（座標は別途取得が必要）
-                    // TODO: プレイヤー座標の取得
-                    position = mc.player.position(); // 仮
+                    // プレイヤーからの音声
+                    // サーバーから同期された位置情報を使用
+                    sourcePos = getPlayerPosition(packet.getSenderId());
+                    if (sourcePos.equals(Vec3.ZERO)) {
+                        // 位置情報がまだ同期されていない場合はスキップ
+                        return;
+                    }
                 }
 
-                // TODO: クライアントサイド音響シミュレーション適用
+                Vec3 listenerPos = mc.player.position();
+                float initialVolume = packet.getVolumeLevel().getAmplitude();
+
+                // クライアントサイド音響シミュレーション実行
+                AcousticSimulationEngine.DSPParameters dspParams =
+                        acousticSimulation.simulate(sourcePos, listenerPos, initialVolume);
+
+                LOGGER.debug("Acoustic simulation: {}", dspParams);
+
+                // DSP処理を適用
+                short[] processed = DSPProcessor.applyDSP(samples, dspParams);
+
+                audioPlayer.addPositionalAudio(packet.getSenderId(), processed, sourcePos);
+            } else {
+                // バンドモード: DSP処理なしでポジショナル再生
+                Vec3 position = mc.player.position(); // 仮
                 audioPlayer.addPositionalAudio(packet.getSenderId(), samples, position);
             }
 
@@ -309,5 +337,19 @@ public class ClientAudioEngine {
 
     public boolean isMuted() {
         return muted;
+    }
+
+    /**
+     * プレイヤー位置を更新（ネットワークパケットから受信）
+     */
+    public void updatePlayerPosition(UUID playerId, Vec3 position) {
+        playerPositions.put(playerId, position);
+    }
+
+    /**
+     * プレイヤー位置を取得（音響シミュレーション用）
+     */
+    private Vec3 getPlayerPosition(UUID playerId) {
+        return playerPositions.getOrDefault(playerId, Vec3.ZERO);
     }
 }

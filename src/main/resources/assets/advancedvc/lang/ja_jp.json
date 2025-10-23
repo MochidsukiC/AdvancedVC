@@ -1,5 +1,6 @@
 {
   "item.advancedvc.walkie_talkie": "ウォーキートーキー",
+  "item.advancedvc.band_tool": "バンドツール（PAミキサー）",
   "block.advancedvc.microphone": "マイクロフォン",
   "block.advancedvc.speaker": "スピーカー",
   "block.advancedvc.soundproof_block": "防音材",
@@ -11,5 +12,38 @@
   "key.advancedvc.volume_up": "声量アップ",
   "key.advancedvc.volume_down": "声量ダウン",
 
-  "itemGroup.advancedvc.advanced_vc_tab": "Advanced VC"
+  "itemGroup.advancedvc.advanced_vc_tab": "Advanced VC",
+
+  "gui.advancedvc.walkie_talkie.title": "ウォーキートーキー設定",
+  "gui.advancedvc.walkie_talkie.frequency": "周波数:",
+  "gui.advancedvc.walkie_talkie.set": "設定",
+  "gui.advancedvc.walkie_talkie.cancel": "キャンセル",
+
+  "gui.advancedvc.speaker.title": "スピーカー設定",
+  "gui.advancedvc.speaker.speaker_pos": "スピーカー位置:",
+  "gui.advancedvc.speaker.mic_x": "マイク X:",
+  "gui.advancedvc.speaker.mic_y": "マイク Y:",
+  "gui.advancedvc.speaker.mic_z": "マイク Z:",
+  "gui.advancedvc.speaker.amplification": "増幅:",
+  "gui.advancedvc.speaker.connect": "接続",
+  "gui.advancedvc.speaker.disconnect": "切断",
+
+  "gui.advancedvc.band_tool.title": "PAミキサー",
+  "gui.advancedvc.band_tool.volume": "音量:",
+  "gui.advancedvc.band_tool.compressor": "コンプ",
+  "gui.advancedvc.band_tool.eq": "EQ",
+  "gui.advancedvc.band_tool.send": "センド:",
+  "gui.advancedvc.band_tool.session_start": "セッション開始",
+  "gui.advancedvc.band_tool.session_end": "セッション終了",
+  "gui.advancedvc.band_tool.close": "閉じる",
+
+  "advancedvc.volume.whisper": "ささやき",
+  "advancedvc.volume.quiet": "小声",
+  "advancedvc.volume.normal": "通常",
+  "advancedvc.volume.loud": "大声",
+  "advancedvc.volume.shout": "叫び",
+
+  "advancedvc.mode.simulation": "シミュレーションモード",
+  "advancedvc.mode.device": "デバイスモード",
+  "advancedvc.mode.band": "バンドモード"
 }
