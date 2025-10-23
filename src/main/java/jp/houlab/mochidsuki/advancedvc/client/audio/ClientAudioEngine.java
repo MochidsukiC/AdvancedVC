@@ -10,7 +10,9 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -39,6 +41,9 @@ public class ClientAudioEngine {
     private int walkieTalkieFrequency = 0;
     private boolean pttPressed = false;
     private boolean muted = false;
+
+    // プレイヤー位置キャッシュ（音響シミュレーション用）
+    private final Map<UUID, Vec3> playerPositions = new ConcurrentHashMap<>();
 
     // シーケンス番号
     private short sequenceNumber = 0;
@@ -249,9 +254,12 @@ public class ClientAudioEngine {
                     sourcePos = new Vec3(packet.getSpeakerX(), packet.getSpeakerY(), packet.getSpeakerZ());
                 } else {
                     // プレイヤーからの音声
-                    // TODO: 他プレイヤーの座標を適切に取得
-                    // 現在は簡易的に自分の位置を使用（実際にはサーバーから座標情報が必要）
-                    sourcePos = mc.player.position().add(10, 0, 0); // 仮の位置
+                    // サーバーから同期された位置情報を使用
+                    sourcePos = getPlayerPosition(packet.getSenderId());
+                    if (sourcePos.equals(Vec3.ZERO)) {
+                        // 位置情報がまだ同期されていない場合はスキップ
+                        return;
+                    }
                 }
 
                 Vec3 listenerPos = mc.player.position();
@@ -329,5 +337,19 @@ public class ClientAudioEngine {
 
     public boolean isMuted() {
         return muted;
+    }
+
+    /**
+     * プレイヤー位置を更新（ネットワークパケットから受信）
+     */
+    public void updatePlayerPosition(UUID playerId, Vec3 position) {
+        playerPositions.put(playerId, position);
+    }
+
+    /**
+     * プレイヤー位置を取得（音響シミュレーション用）
+     */
+    private Vec3 getPlayerPosition(UUID playerId) {
+        return playerPositions.getOrDefault(playerId, Vec3.ZERO);
     }
 }

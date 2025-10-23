@@ -1,7 +1,7 @@
 package jp.houlab.mochidsuki.advancedvc.item;
 
-import jp.houlab.mochidsuki.advancedvc.client.audio.ClientAudioEngine;
-import jp.houlab.mochidsuki.advancedvc.common.AudioConstants;
+import jp.houlab.mochidsuki.advancedvc.client.gui.WalkieTalkieScreen;
+import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResultHolder;
@@ -30,23 +30,10 @@ public class WalkieTalkieItem extends Item {
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
 
-        if (!level.isClientSide) {
-            return InteractionResultHolder.success(stack);
+        if (level.isClientSide) {
+            // クライアントサイドでGUIを開く
+            Minecraft.getInstance().setScreen(new WalkieTalkieScreen(stack));
         }
-
-        // クライアントサイドでGUIを開く
-        // TODO: 周波数設定GUI実装
-        // 現在は簡易的にデフォルト周波数を設定
-        int currentFreq = getFrequency(stack);
-        int newFreq = (currentFreq % AudioConstants.WALKIE_TALKIE_MAX_FREQ) + 1;
-        setFrequency(stack, newFreq);
-
-        ClientAudioEngine.getInstance().setWalkieTalkieFrequency(newFreq);
-
-        player.displayClientMessage(
-                Component.literal("ウォーキートーキー周波数: " + newFreq),
-                true
-        );
 
         return InteractionResultHolder.success(stack);
     }
@@ -57,7 +44,7 @@ public class WalkieTalkieItem extends Item {
 
         int frequency = getFrequency(stack);
         if (frequency > 0) {
-            tooltip.add(Component.literal("周波数: " + frequency));
+            tooltip.add(Component.literal("周波数: " + frequency + " Hz"));
         } else {
             tooltip.add(Component.literal("右クリックで周波数を設定"));
         }

@@ -5,6 +5,7 @@ import jp.houlab.mochidsuki.advancedvc.api.AcousticPropertiesLoader;
 import jp.houlab.mochidsuki.advancedvc.block.*;
 import jp.houlab.mochidsuki.advancedvc.block.entity.ModBlockEntities;
 import jp.houlab.mochidsuki.advancedvc.client.audio.ClientAudioEngine;
+import jp.houlab.mochidsuki.advancedvc.item.BandToolItem;
 import jp.houlab.mochidsuki.advancedvc.item.WalkieTalkieItem;
 import jp.houlab.mochidsuki.advancedvc.network.NetworkManager;
 import jp.houlab.mochidsuki.advancedvc.server.ServerAudioRouter;
@@ -98,7 +99,8 @@ public class AdvancedvcMain {
     public static final RegistryObject<Item> WALKIE_TALKIE = ITEMS.register("walkie_talkie",
             () -> new WalkieTalkieItem(new Item.Properties().stacksTo(1)));
 
-    // TODO: Band Tool アイテム
+    public static final RegistryObject<Item> BAND_TOOL = ITEMS.register("band_tool",
+            () -> new BandToolItem(new Item.Properties().stacksTo(1)));
 
     // ===== クリエイティブタブ =====
     public static final RegistryObject<CreativeModeTab> ADVANCED_VC_TAB = CREATIVE_MODE_TABS.register("advanced_vc_tab",
@@ -109,6 +111,7 @@ public class AdvancedvcMain {
                     .displayItems((parameters, output) -> {
                         // アイテム追加
                         output.accept(WALKIE_TALKIE.get());
+                        output.accept(BAND_TOOL.get());
                         output.accept(MICROPHONE_ITEM.get());
                         output.accept(SPEAKER_ITEM.get());
                         output.accept(SOUNDPROOF_BLOCK_ITEM.get());
