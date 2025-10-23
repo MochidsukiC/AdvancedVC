@@ -1,7 +1,7 @@
 plugins {
     id 'eclipse'
     id 'idea'
-    id 'net.minecraftforge.gradle' version '[6.0.16,6.2)'
+    id 'net.minecraftforge.gradle' version '6.0.24'
 }
 
 
@@ -130,6 +130,13 @@ dependencies {
     // If the group id is "net.minecraft" and the artifact id is one of ["client", "server", "joined"],
     // then special handling is done to allow a setup of a vanilla dependency without the use of an external repository.
     minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+
+    // Audio processing libraries for Advanced VC
+    // Opus codec for audio encoding/decoding
+    implementation 'org.concentus:concentus:1.0.1'
+
+    // Netty for enhanced UDP networking (already included in Minecraft, but explicit for clarity)
+    // compileOnly 'io.netty:netty-all:4.1.77.Final'
 
     // Example mod dependency with JEI - using fg.deobf() ensures the dependency is remapped to your development mappings
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime

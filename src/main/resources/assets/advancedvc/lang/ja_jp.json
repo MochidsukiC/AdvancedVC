@@ -1,0 +1,15 @@
+{
+  "item.advancedvc.walkie_talkie": "ウォーキートーキー",
+  "block.advancedvc.microphone": "マイクロフォン",
+  "block.advancedvc.speaker": "スピーカー",
+  "block.advancedvc.soundproof_block": "防音材",
+  "block.advancedvc.absorbent_block": "吸音材",
+
+  "key.categories.advancedvc": "Advanced VC",
+  "key.advancedvc.ptt": "プッシュトゥトーク (PTT)",
+  "key.advancedvc.mute": "ミュート/ミュート解除",
+  "key.advancedvc.volume_up": "声量アップ",
+  "key.advancedvc.volume_down": "声量ダウン",
+
+  "itemGroup.advancedvc.advanced_vc_tab": "Advanced VC"
+}

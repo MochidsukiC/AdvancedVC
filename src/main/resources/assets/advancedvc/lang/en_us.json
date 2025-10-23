@@ -1,0 +1,15 @@
+{
+  "item.advancedvc.walkie_talkie": "Walkie-Talkie",
+  "block.advancedvc.microphone": "Microphone",
+  "block.advancedvc.speaker": "Speaker",
+  "block.advancedvc.soundproof_block": "Soundproof Block",
+  "block.advancedvc.absorbent_block": "Absorbent Block",
+
+  "key.categories.advancedvc": "Advanced VC",
+  "key.advancedvc.ptt": "Push to Talk (PTT)",
+  "key.advancedvc.mute": "Mute/Unmute",
+  "key.advancedvc.volume_up": "Volume Up",
+  "key.advancedvc.volume_down": "Volume Down",
+
+  "itemGroup.advancedvc.advanced_vc_tab": "Advanced VC"
+}

@@ -1,21 +1,27 @@
 package jp.houlab.mochidsuki.advancedvc;
 
 import com.mojang.logging.LogUtils;
+import jp.houlab.mochidsuki.advancedvc.block.*;
+import jp.houlab.mochidsuki.advancedvc.client.audio.ClientAudioEngine;
+import jp.houlab.mochidsuki.advancedvc.item.WalkieTalkieItem;
+import jp.houlab.mochidsuki.advancedvc.network.NetworkManager;
+import jp.houlab.mochidsuki.advancedvc.server.ServerAudioRouter;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.Registries;
-import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.material.MapColor;
 import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
-import net.minecraftforge.event.server.ServerStartingEvent;
+import net.minecraftforge.event.server.ServerStartedEvent;
+import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.ModLoadingContext;
@@ -29,90 +35,198 @@ import net.minecraftforge.registries.ForgeRegistries;
 import net.minecraftforge.registries.RegistryObject;
 import org.slf4j.Logger;
 
-// The value here should match an entry in the META-INF/mods.toml file
+/**
+ * Advanced VC (Advanced Voice Chat) Main Class
+ * 高度音響VCシステムのメインクラス
+ */
 @Mod(AdvancedvcMain.MODID)
 public class AdvancedvcMain {
 
-    // Define mod id in a common place for everything to reference
     public static final String MODID = "advancedvc";
-    // Directly reference a slf4j logger
     private static final Logger LOGGER = LogUtils.getLogger();
-    // Create a Deferred Register to hold Blocks which will all be registered under the "advancedvc" namespace
+
+    // ===== Deferred Registers =====
     public static final DeferredRegister<Block> BLOCKS = DeferredRegister.create(ForgeRegistries.BLOCKS, MODID);
-    // Create a Deferred Register to hold Items which will all be registered under the "advancedvc" namespace
     public static final DeferredRegister<Item> ITEMS = DeferredRegister.create(ForgeRegistries.ITEMS, MODID);
-    // Create a Deferred Register to hold CreativeModeTabs which will all be registered under the "advancedvc" namespace
     public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS = DeferredRegister.create(Registries.CREATIVE_MODE_TAB, MODID);
 
-    // Creates a new Block with the id "advancedvc:example_block", combining the namespace and path
-    public static final RegistryObject<Block> EXAMPLE_BLOCK = BLOCKS.register("example_block", () -> new Block(BlockBehaviour.Properties.of().mapColor(MapColor.STONE)));
-    // Creates a new BlockItem with the id "advancedvc:example_block", combining the namespace and path
-    public static final RegistryObject<Item> EXAMPLE_BLOCK_ITEM = ITEMS.register("example_block", () -> new BlockItem(EXAMPLE_BLOCK.get(), new Item.Properties()));
+    // ===== ブロック登録 =====
+    // 音響ブロック
+    public static final RegistryObject<Block> MICROPHONE_BLOCK = BLOCKS.register("microphone",
+            () -> new MicrophoneBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.METAL)
+                    .strength(3.0f)
+                    .sound(SoundType.METAL)
+                    .requiresCorrectToolForDrops()));
 
-    // Creates a new food item with the id "advancedvc:example_id", nutrition 1 and saturation 2
-    public static final RegistryObject<Item> EXAMPLE_ITEM = ITEMS.register("example_item", () -> new Item(new Item.Properties().food(new FoodProperties.Builder().alwaysEat().nutrition(1).saturationMod(2f).build())));
+    public static final RegistryObject<Block> SPEAKER_BLOCK = BLOCKS.register("speaker",
+            () -> new SpeakerBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.METAL)
+                    .strength(3.0f)
+                    .sound(SoundType.METAL)
+                    .requiresCorrectToolForDrops()));
 
-    // Creates a creative tab with the id "advancedvc:example_tab" for the example item, that is placed after the combat tab
-    public static final RegistryObject<CreativeModeTab> EXAMPLE_TAB = CREATIVE_MODE_TABS.register("example_tab", () -> CreativeModeTab.builder().withTabsBefore(CreativeModeTabs.COMBAT).icon(() -> EXAMPLE_ITEM.get().getDefaultInstance()).displayItems((parameters, output) -> {
-        output.accept(EXAMPLE_ITEM.get()); // Add the example item to the tab. For your own tabs, this method is preferred over the event
-    }).build());
+    public static final RegistryObject<Block> SOUNDPROOF_BLOCK = BLOCKS.register("soundproof_block",
+            () -> new SoundproofBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.WOOL)
+                    .strength(2.0f)
+                    .sound(SoundType.WOOL)));
+
+    public static final RegistryObject<Block> ABSORBENT_BLOCK = BLOCKS.register("absorbent_block",
+            () -> new AbsorbentBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.WOOL)
+                    .strength(2.0f)
+                    .sound(SoundType.WOOL)));
+
+    // ===== アイテム登録 =====
+    // ブロックアイテム
+    public static final RegistryObject<Item> MICROPHONE_ITEM = ITEMS.register("microphone",
+            () -> new BlockItem(MICROPHONE_BLOCK.get(), new Item.Properties()));
+
+    public static final RegistryObject<Item> SPEAKER_ITEM = ITEMS.register("speaker",
+            () -> new BlockItem(SPEAKER_BLOCK.get(), new Item.Properties()));
+
+    public static final RegistryObject<Item> SOUNDPROOF_BLOCK_ITEM = ITEMS.register("soundproof_block",
+            () -> new BlockItem(SOUNDPROOF_BLOCK.get(), new Item.Properties()));
+
+    public static final RegistryObject<Item> ABSORBENT_BLOCK_ITEM = ITEMS.register("absorbent_block",
+            () -> new BlockItem(ABSORBENT_BLOCK.get(), new Item.Properties()));
+
+    // ツールアイテム
+    public static final RegistryObject<Item> WALKIE_TALKIE = ITEMS.register("walkie_talkie",
+            () -> new WalkieTalkieItem(new Item.Properties().stacksTo(1)));
+
+    // TODO: Band Tool アイテム
+
+    // ===== クリエイティブタブ =====
+    public static final RegistryObject<CreativeModeTab> ADVANCED_VC_TAB = CREATIVE_MODE_TABS.register("advanced_vc_tab",
+            () -> CreativeModeTab.builder()
+                    .withTabsBefore(CreativeModeTabs.COMBAT)
+                    .icon(() -> WALKIE_TALKIE.get().getDefaultInstance())
+                    .title(net.minecraft.network.chat.Component.literal("Advanced VC"))
+                    .displayItems((parameters, output) -> {
+                        // アイテム追加
+                        output.accept(WALKIE_TALKIE.get());
+                        output.accept(MICROPHONE_ITEM.get());
+                        output.accept(SPEAKER_ITEM.get());
+                        output.accept(SOUNDPROOF_BLOCK_ITEM.get());
+                        output.accept(ABSORBENT_BLOCK_ITEM.get());
+                    })
+                    .build());
 
     public AdvancedvcMain() {
         IEventBus modEventBus = FMLJavaModLoadingContext.get().getModEventBus();
 
-        // Register the commonSetup method for modloading
+        // 共通セットアップ
         modEventBus.addListener(this::commonSetup);
 
-        // Register the Deferred Register to the mod event bus so blocks get registered
+        // レジストリ登録
         BLOCKS.register(modEventBus);
-        // Register the Deferred Register to the mod event bus so items get registered
         ITEMS.register(modEventBus);
-        // Register the Deferred Register to the mod event bus so tabs get registered
         CREATIVE_MODE_TABS.register(modEventBus);
 
-        // Register ourselves for server and other game events we are interested in
+        // イベントバス登録
         MinecraftForge.EVENT_BUS.register(this);
 
-        // Register the item to a creative tab
+        // クリエイティブタブ追加
         modEventBus.addListener(this::addCreative);
 
-        // Register our mod's ForgeConfigSpec so that Forge can create and load the config file for us
+        // 設定登録
         ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, Config.SPEC);
+
+        LOGGER.info("Advanced VC initialized");
     }
 
     private void commonSetup(final FMLCommonSetupEvent event) {
-        // Some common setup code
-        LOGGER.info("HELLO FROM COMMON SETUP");
-        LOGGER.info("DIRT BLOCK >> {}", ForgeRegistries.BLOCKS.getKey(Blocks.DIRT));
+        LOGGER.info("Advanced VC common setup");
 
-        if (Config.logDirtBlock) LOGGER.info("DIRT BLOCK >> {}", ForgeRegistries.BLOCKS.getKey(Blocks.DIRT));
-
-        LOGGER.info(Config.magicNumberIntroduction + Config.magicNumber);
-
-        Config.items.forEach((item) -> LOGGER.info("ITEM >> {}", item.toString()));
+        // ネットワークチャネル登録
+        event.enqueueWork(NetworkManager::register);
     }
 
-    // Add the example block item to the building blocks tab
     private void addCreative(BuildCreativeModeTabContentsEvent event) {
-        if (event.getTabKey() == CreativeModeTabs.BUILDING_BLOCKS) event.accept(EXAMPLE_BLOCK_ITEM);
+        // 必要に応じて他のタブにもアイテムを追加
     }
 
-    // You can use SubscribeEvent and let the Event Bus discover methods to call
+    /**
+     * サーバー起動時の処理
+     */
     @SubscribeEvent
-    public void onServerStarting(ServerStartingEvent event) {
-        // Do something when the server starts
-        LOGGER.info("HELLO from server starting");
+    public void onServerStarted(ServerStartedEvent event) {
+        LOGGER.info("Advanced VC: Server started, initializing audio router");
+
+        // サーバーサイド・オーディオルーターを起動
+        ServerAudioRouter router = ServerAudioRouter.getInstance();
+        router.start(event.getServer(), Config.udpPort);
     }
 
-    // You can use EventBusSubscriber to automatically register all static methods in the class annotated with @SubscribeEvent
+    /**
+     * サーバー停止時の処理
+     */
+    @SubscribeEvent
+    public void onServerStopping(ServerStoppingEvent event) {
+        LOGGER.info("Advanced VC: Server stopping, shutting down audio router");
+
+        // サーバーサイド・オーディオルーターを停止
+        ServerAudioRouter router = ServerAudioRouter.getInstance();
+        router.stop();
+    }
+
+    /**
+     * クライアントサイドのイベントハンドラー
+     */
     @Mod.EventBusSubscriber(modid = MODID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
     public static class ClientModEvents {
 
         @SubscribeEvent
         public static void onClientSetup(FMLClientSetupEvent event) {
-            // Some client setup code
-            LOGGER.info("HELLO FROM CLIENT SETUP");
-            LOGGER.info("MINECRAFT NAME >> {}", Minecraft.getInstance().getUser().getName());
+            LOGGER.info("Advanced VC: Client setup");
+        }
+    }
+
+    /**
+     * クライアントサイドのゲームイベント
+     */
+    @Mod.EventBusSubscriber(modid = MODID, bus = Mod.EventBusSubscriber.Bus.FORGE, value = Dist.CLIENT)
+    public static class ClientForgeEvents {
+
+        /**
+         * サーバーに接続した時
+         */
+        @SubscribeEvent
+        public static void onClientPlayerLoggedIn(ClientPlayerNetworkEvent.LoggingIn event) {
+            if (!Config.enableVoiceChat) {
+                LOGGER.info("Voice chat is disabled in config");
+                return;
+            }
+
+            if (!Config.autoStart) {
+                LOGGER.info("Auto-start is disabled, voice chat not started automatically");
+                return;
+            }
+
+            LOGGER.info("Advanced VC: Player logged in, starting client audio engine");
+
+            // クライアントオーディオエンジンを起動
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.getCurrentServer() != null) {
+                String serverAddress = mc.getCurrentServer().ip;
+                ClientAudioEngine.getInstance().start(serverAddress, Config.udpPort);
+            }
+        }
+
+        /**
+         * サーバーから切断した時
+         */
+        @SubscribeEvent
+        public static void onClientPlayerLoggedOut(ClientPlayerNetworkEvent.LoggingOut event) {
+            LOGGER.info("Advanced VC: Player logged out, stopping client audio engine");
+
+            // クライアントオーディオエンジンを停止
+            ClientAudioEngine engine = ClientAudioEngine.getInstance();
+            if (engine.isRunning()) {
+                engine.stop();
+            }
         }
     }
 }
