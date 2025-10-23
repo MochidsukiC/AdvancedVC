@@ -3,16 +3,16 @@ package jp.houlab.mochidsuki.advancedvc.server;
 import com.mojang.logging.LogUtils;
 import jp.houlab.mochidsuki.advancedvc.common.AudioConstants;
 import jp.houlab.mochidsuki.advancedvc.common.VoiceMode;
+import jp.houlab.mochidsuki.advancedvc.common.VolumeLevel;
 import jp.houlab.mochidsuki.advancedvc.network.UDPNetworkManager;
 import jp.houlab.mochidsuki.advancedvc.network.packet.VoicePacket;
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -34,6 +34,10 @@ public class ServerAudioRouter {
 
     // バンドセッション管理
     private BandSession activeBandSession = null;
+
+    // マイク/スピーカー管理
+    private final ConcurrentHashMap<BlockPos, Set<UUID>> microphoneRegistry = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<BlockPos, SpeakerInfo> speakerRegistry = new ConcurrentHashMap<>();
 
     private ServerAudioRouter() {
     }
@@ -217,6 +221,52 @@ public class ServerAudioRouter {
         return running.get();
     }
 
+    // ===== マイク/スピーカー管理 =====
+
+    /**
+     * マイクにプレイヤーを登録
+     */
+    public void registerMicrophone(BlockPos micPos, UUID playerId) {
+        microphoneRegistry.computeIfAbsent(micPos, k -> new HashSet<>()).add(playerId);
+    }
+
+    /**
+     * マイクからプレイヤーを登録解除
+     */
+    public void unregisterMicrophone(BlockPos micPos, UUID playerId) {
+        Set<UUID> players = microphoneRegistry.get(micPos);
+        if (players != null) {
+            players.remove(playerId);
+            if (players.isEmpty()) {
+                microphoneRegistry.remove(micPos);
+            }
+        }
+    }
+
+    /**
+     * スピーカーを登録
+     */
+    public void registerSpeaker(BlockPos speakerPos, BlockPos microphonePos, VolumeLevel amplification) {
+        speakerRegistry.put(speakerPos, new SpeakerInfo(microphonePos, amplification));
+    }
+
+    /**
+     * スピーカーを登録解除
+     */
+    public void unregisterSpeaker(BlockPos speakerPos) {
+        speakerRegistry.remove(speakerPos);
+    }
+
+    /**
+     * スピーカーの増幅レベルを更新
+     */
+    public void updateSpeakerAmplification(BlockPos speakerPos, VolumeLevel amplification) {
+        SpeakerInfo info = speakerRegistry.get(speakerPos);
+        if (info != null) {
+            info.amplification = amplification;
+        }
+    }
+
     /**
      * プレイヤーの音声状態
      */
@@ -243,6 +293,19 @@ public class ServerAudioRouter {
 
         public List<String> getMemberIds() {
             return memberIds.stream().map(UUID::toString).toList();
+        }
+    }
+
+    /**
+     * スピーカー情報
+     */
+    private static class SpeakerInfo {
+        BlockPos connectedMicrophone;
+        VolumeLevel amplification;
+
+        public SpeakerInfo(BlockPos connectedMicrophone, VolumeLevel amplification) {
+            this.connectedMicrophone = connectedMicrophone;
+            this.amplification = amplification;
         }
     }
 }

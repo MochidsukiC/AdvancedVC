@@ -1,0 +1,76 @@
+{
+  "_comment": "音響特性定義 - 各ブロックの吸収率と反射率",
+  "blocks": {
+    "minecraft:air": {
+      "absorption": 0.0,
+      "reflection": 0.0
+    },
+    "minecraft:stone": {
+      "absorption": 0.2,
+      "reflection": 0.7
+    },
+    "minecraft:cobblestone": {
+      "absorption": 0.3,
+      "reflection": 0.6
+    },
+    "minecraft:dirt": {
+      "absorption": 0.5,
+      "reflection": 0.3
+    },
+    "minecraft:grass_block": {
+      "absorption": 0.6,
+      "reflection": 0.2
+    },
+    "minecraft:glass": {
+      "absorption": 0.1,
+      "reflection": 0.8
+    },
+    "minecraft:wood": {
+      "absorption": 0.4,
+      "reflection": 0.4
+    },
+    "minecraft:oak_planks": {
+      "absorption": 0.4,
+      "reflection": 0.4
+    },
+    "minecraft:wool": {
+      "absorption": 0.9,
+      "reflection": 0.05
+    },
+    "minecraft:white_wool": {
+      "absorption": 0.9,
+      "reflection": 0.05
+    },
+    "minecraft:bricks": {
+      "absorption": 0.3,
+      "reflection": 0.6
+    },
+    "minecraft:concrete": {
+      "absorption": 0.15,
+      "reflection": 0.75
+    },
+    "minecraft:water": {
+      "absorption": 0.9,
+      "reflection": 0.1
+    },
+    "minecraft:lava": {
+      "absorption": 0.95,
+      "reflection": 0.05
+    },
+    "advancedvc:soundproof_block": {
+      "absorption": 1.0,
+      "reflection": 0.0,
+      "_comment": "防音材 - 完全吸収"
+    },
+    "advancedvc:absorbent_block": {
+      "absorption": 0.8,
+      "reflection": 0.0,
+      "_comment": "吸音材 - 反射なし"
+    }
+  },
+  "default": {
+    "absorption": 0.3,
+    "reflection": 0.3,
+    "_comment": "未定義ブロックのデフォルト値"
+  }
+}

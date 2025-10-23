@@ -1,7 +1,9 @@
 package jp.houlab.mochidsuki.advancedvc;
 
 import com.mojang.logging.LogUtils;
+import jp.houlab.mochidsuki.advancedvc.api.AcousticPropertiesLoader;
 import jp.houlab.mochidsuki.advancedvc.block.*;
+import jp.houlab.mochidsuki.advancedvc.block.entity.ModBlockEntities;
 import jp.houlab.mochidsuki.advancedvc.client.audio.ClientAudioEngine;
 import jp.houlab.mochidsuki.advancedvc.item.WalkieTalkieItem;
 import jp.houlab.mochidsuki.advancedvc.network.NetworkManager;
@@ -124,6 +126,7 @@ public class AdvancedvcMain {
         BLOCKS.register(modEventBus);
         ITEMS.register(modEventBus);
         CREATIVE_MODE_TABS.register(modEventBus);
+        ModBlockEntities.BLOCK_ENTITIES.register(modEventBus);
 
         // イベントバス登録
         MinecraftForge.EVENT_BUS.register(this);
@@ -142,6 +145,9 @@ public class AdvancedvcMain {
 
         // ネットワークチャネル登録
         event.enqueueWork(NetworkManager::register);
+
+        // 音響特性のロード
+        event.enqueueWork(AcousticPropertiesLoader::loadAcousticProperties);
     }
 
     private void addCreative(BuildCreativeModeTabContentsEvent event) {

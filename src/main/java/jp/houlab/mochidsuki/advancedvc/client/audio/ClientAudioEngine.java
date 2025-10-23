@@ -30,6 +30,7 @@ public class ClientAudioEngine {
     private OpusCodec.Decoder decoder;
     private AudioPlayer audioPlayer;
     private UDPNetworkManager udpNetwork;
+    private AcousticSimulationEngine acousticSimulation;
 
     // 状態
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -74,6 +75,7 @@ public class ClientAudioEngine {
         decoder = OpusCodec.createDecoder();
         audioPlayer = new AudioPlayer();
         udpNetwork = new UDPNetworkManager(0); // クライアントはランダムポート
+        acousticSimulation = new AcousticSimulationEngine();
 
         // UDP設定
         udpNetwork.setServerAddress(serverHost, serverPort);
@@ -236,20 +238,38 @@ public class ClientAudioEngine {
             // モードに応じた再生
             if (packet.getMode() == VoiceMode.DEVICE) {
                 // デバイスモード: 非ポジショナル再生
-                audioPlayer.addNonPositionalAudio(samples);
-            } else {
-                // シミュレーション/バンドモード: ポジショナル再生
-                Vec3 position;
+                // ウォーキートーキー風の音質劣化を適用
+                short[] filtered = DSPProcessor.applyWalkieTalkieFilter(samples);
+                audioPlayer.addNonPositionalAudio(filtered);
+            } else if (packet.getMode() == VoiceMode.SIMULATION) {
+                // シミュレーションモード: 音響シミュレーション + ポジショナル再生
+                Vec3 sourcePos;
                 if (packet.isFromSpeaker()) {
                     // スピーカーブロックからの音声
-                    position = new Vec3(packet.getSpeakerX(), packet.getSpeakerY(), packet.getSpeakerZ());
+                    sourcePos = new Vec3(packet.getSpeakerX(), packet.getSpeakerY(), packet.getSpeakerZ());
                 } else {
-                    // プレイヤーからの音声（座標は別途取得が必要）
-                    // TODO: プレイヤー座標の取得
-                    position = mc.player.position(); // 仮
+                    // プレイヤーからの音声
+                    // TODO: 他プレイヤーの座標を適切に取得
+                    // 現在は簡易的に自分の位置を使用（実際にはサーバーから座標情報が必要）
+                    sourcePos = mc.player.position().add(10, 0, 0); // 仮の位置
                 }
 
-                // TODO: クライアントサイド音響シミュレーション適用
+                Vec3 listenerPos = mc.player.position();
+                float initialVolume = packet.getVolumeLevel().getAmplitude();
+
+                // クライアントサイド音響シミュレーション実行
+                AcousticSimulationEngine.DSPParameters dspParams =
+                        acousticSimulation.simulate(sourcePos, listenerPos, initialVolume);
+
+                LOGGER.debug("Acoustic simulation: {}", dspParams);
+
+                // DSP処理を適用
+                short[] processed = DSPProcessor.applyDSP(samples, dspParams);
+
+                audioPlayer.addPositionalAudio(packet.getSenderId(), processed, sourcePos);
+            } else {
+                // バンドモード: DSP処理なしでポジショナル再生
+                Vec3 position = mc.player.position(); // 仮
                 audioPlayer.addPositionalAudio(packet.getSenderId(), samples, position);
             }
 
