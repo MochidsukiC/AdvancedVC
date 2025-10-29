@@ -55,14 +55,14 @@ public class SpeakerBlockEntity extends BlockEntity {
     /**
      * 増幅レベルを設定
      */
-    public void setAmplification(VolumeLevel level) {
-        this.amplification = level;
+    public void setAmplification(VolumeLevel amplificationLevel) {
+        this.amplification = amplificationLevel;
         setChanged();
 
         // サーバーに更新通知
-        if (connectedMicrophone != null && !level.isClientSide()) {
+        if (connectedMicrophone != null && !this.level.isClientSide()) {
             ServerAudioRouter router = ServerAudioRouter.getInstance();
-            router.updateSpeakerAmplification(worldPosition, level);
+            router.updateSpeakerAmplification(worldPosition, amplificationLevel);
         }
     }
 

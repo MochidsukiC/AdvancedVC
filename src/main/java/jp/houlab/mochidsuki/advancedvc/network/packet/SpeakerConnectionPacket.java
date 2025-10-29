@@ -68,12 +68,12 @@ public class SpeakerConnectionPacket {
                 if (blockEntity instanceof SpeakerBlockEntity speakerBE) {
                     if (connect) {
                         // 接続
-                        speakerBE.setConnectedMicrophone(microphonePos);
+                        speakerBE.connectToMicrophone(microphonePos);
                         VolumeLevel volumeLevel = VolumeLevel.values()[amplificationLevel];
-                        speakerBE.setAmplificationLevel(volumeLevel);
+                        speakerBE.setAmplification(volumeLevel);
                     } else {
                         // 切断
-                        speakerBE.setConnectedMicrophone(null);
+                        speakerBE.disconnect();
                     }
                     speakerBE.setChanged();
                 }

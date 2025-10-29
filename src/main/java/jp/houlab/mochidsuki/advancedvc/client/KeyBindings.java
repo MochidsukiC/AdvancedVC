@@ -3,6 +3,7 @@ package jp.houlab.mochidsuki.advancedvc.client;
 import com.mojang.blaze3d.platform.InputConstants;
 import jp.houlab.mochidsuki.advancedvc.AdvancedvcMain;
 import jp.houlab.mochidsuki.advancedvc.client.audio.ClientAudioEngine;
+import jp.houlab.mochidsuki.advancedvc.client.gui.VoiceSettingsScreen;
 import jp.houlab.mochidsuki.advancedvc.common.VolumeLevel;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -48,6 +49,13 @@ public class KeyBindings {
             "key.categories.advancedvc"
     );
 
+    public static final KeyMapping KEY_SETTINGS = new KeyMapping(
+            "key.advancedvc.settings",
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_K, // デフォルト: K
+            "key.categories.advancedvc"
+    );
+
     /**
      * キーマッピング登録イベント
      */
@@ -59,6 +67,7 @@ public class KeyBindings {
             event.register(KEY_MUTE);
             event.register(KEY_VOLUME_UP);
             event.register(KEY_VOLUME_DOWN);
+            event.register(KEY_SETTINGS);
         }
     }
 
@@ -114,6 +123,11 @@ public class KeyBindings {
                     net.minecraft.network.chat.Component.literal("声量: " + previous.getDisplayName()),
                     true
             );
+        }
+
+        // 設定画面を開く
+        if (KEY_SETTINGS.consumeClick()) {
+            mc.setScreen(new VoiceSettingsScreen(mc.screen));
         }
     }
 }

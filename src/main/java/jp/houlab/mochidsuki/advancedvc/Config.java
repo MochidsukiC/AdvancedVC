@@ -80,4 +80,33 @@ public class Config {
         autoStart = AUTO_START.get();
         debugMode = DEBUG_MODE.get();
     }
+
+    // ===== 設定保存メソッド =====
+
+    /**
+     * VAD閾値を保存
+     */
+    public static void saveVadThreshold(double threshold) {
+        VAD_THRESHOLD.set(threshold);
+        vadThreshold = (float) threshold;
+        SPEC.save();
+    }
+
+    /**
+     * 音声チャット有効/無効を保存
+     */
+    public static void saveEnableVoiceChat(boolean enabled) {
+        ENABLE_VOICE_CHAT.set(enabled);
+        enableVoiceChat = enabled;
+        SPEC.save();
+    }
+
+    /**
+     * 自動起動設定を保存
+     */
+    public static void saveAutoStart(boolean autoStart) {
+        AUTO_START.set(autoStart);
+        Config.autoStart = autoStart;
+        SPEC.save();
+    }
 }

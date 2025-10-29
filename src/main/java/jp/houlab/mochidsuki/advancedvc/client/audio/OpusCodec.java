@@ -2,7 +2,7 @@ package jp.houlab.mochidsuki.advancedvc.client.audio;
 
 import com.mojang.logging.LogUtils;
 import jp.houlab.mochidsuki.advancedvc.common.AudioConstants;
-import org.concentus.*;
+import io.github.jaredmdobson.concentus.*;
 import org.slf4j.Logger;
 
 /**
@@ -58,11 +58,7 @@ public class OpusCodec {
         }
 
         public void setBitrate(int bitrate) {
-            try {
-                encoder.setBitrate(bitrate);
-            } catch (OpusException e) {
-                LOGGER.error("Failed to set bitrate", e);
-            }
+            encoder.setBitrate(bitrate);
         }
     }
 

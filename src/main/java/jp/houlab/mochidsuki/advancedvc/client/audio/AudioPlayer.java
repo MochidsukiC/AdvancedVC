@@ -248,4 +248,13 @@ public class AudioPlayer {
     public boolean isRunning() {
         return running;
     }
+
+    /**
+     * 出力ゲインを設定（0.0～1.0）
+     */
+    public void setOutputGain(double gain) {
+        // TODO: 出力ゲインの実装
+        // 実際の実装では、再生するサンプルに対してゲインを適用する必要があります
+        LOGGER.info("Output gain set to: {}", gain);
+    }
 }

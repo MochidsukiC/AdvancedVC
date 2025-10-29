@@ -172,4 +172,13 @@ public class MicrophoneCapture {
     public static Mixer.Info[] getAvailableMicrophones() {
         return AudioSystem.getMixerInfo();
     }
+
+    /**
+     * 入力ゲインを設定（0.0～1.0）
+     */
+    public void setInputGain(double gain) {
+        // TODO: 入力ゲインの実装
+        // 実際の実装では、キャプチャしたサンプルに対してゲインを適用する必要があります
+        LOGGER.info("Input gain set to: {}", gain);
+    }
 }

@@ -5,6 +5,7 @@ import jp.houlab.mochidsuki.advancedvc.api.AcousticPropertiesLoader;
 import jp.houlab.mochidsuki.advancedvc.block.*;
 import jp.houlab.mochidsuki.advancedvc.block.entity.ModBlockEntities;
 import jp.houlab.mochidsuki.advancedvc.client.audio.ClientAudioEngine;
+import jp.houlab.mochidsuki.advancedvc.client.gui.VoiceHudOverlay;
 import jp.houlab.mochidsuki.advancedvc.item.BandToolItem;
 import jp.houlab.mochidsuki.advancedvc.item.WalkieTalkieItem;
 import jp.houlab.mochidsuki.advancedvc.network.NetworkManager;
@@ -21,13 +22,13 @@ import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.material.MapColor;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
+import net.minecraftforge.client.event.RegisterGuiOverlaysEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
 import net.minecraftforge.event.server.ServerStartedEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.config.ModConfig;
 import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
@@ -119,8 +120,8 @@ public class AdvancedvcMain {
                     })
                     .build());
 
-    public AdvancedvcMain() {
-        IEventBus modEventBus = FMLJavaModLoadingContext.get().getModEventBus();
+    public AdvancedvcMain(FMLJavaModLoadingContext context) {
+        IEventBus modEventBus = context.getModEventBus();
 
         // 共通セットアップ
         modEventBus.addListener(this::commonSetup);
@@ -138,7 +139,7 @@ public class AdvancedvcMain {
         modEventBus.addListener(this::addCreative);
 
         // 設定登録
-        ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, Config.SPEC);
+        context.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
 
         LOGGER.info("Advanced VC initialized");
     }
@@ -191,6 +192,12 @@ public class AdvancedvcMain {
         public static void onClientSetup(FMLClientSetupEvent event) {
             LOGGER.info("Advanced VC: Client setup");
         }
+
+        @SubscribeEvent
+        public static void onRegisterGuiOverlays(RegisterGuiOverlaysEvent event) {
+            event.registerAboveAll("voice_hud", new VoiceHudOverlay());
+            LOGGER.info("Advanced VC: Voice HUD overlay registered");
+        }
     }
 
     /**
@@ -218,10 +225,23 @@ public class AdvancedvcMain {
 
             // クライアントオーディオエンジンを起動
             Minecraft mc = Minecraft.getInstance();
+            String serverAddress;
+
+            // サーバーアドレスを判定
             if (mc.getCurrentServer() != null) {
-                String serverAddress = mc.getCurrentServer().ip;
-                ClientAudioEngine.getInstance().start(serverAddress, Config.udpPort);
+                // マルチプレイヤー接続
+                serverAddress = mc.getCurrentServer().ip;
+                LOGGER.info("Connecting to multiplayer server: {}", serverAddress);
+            } else if (mc.hasSingleplayerServer()) {
+                // 統合サーバー（シングルプレイまたはLANに公開）
+                serverAddress = "127.0.0.1";
+                LOGGER.info("Connecting to integrated server (localhost)");
+            } else {
+                LOGGER.warn("Unable to determine server address, voice chat not started");
+                return;
             }
+
+            ClientAudioEngine.getInstance().start(serverAddress, Config.udpPort);
         }
 
         /**

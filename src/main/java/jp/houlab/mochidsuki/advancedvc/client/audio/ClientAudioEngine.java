@@ -42,6 +42,11 @@ public class ClientAudioEngine {
     private boolean pttPressed = false;
     private boolean muted = false;
 
+    // 接続状態
+    private final AtomicBoolean connectionFailed = new AtomicBoolean(false);
+    private String lastServerHost = null;
+    private int lastServerPort = 0;
+
     // プレイヤー位置キャッシュ（音響シミュレーション用）
     private final Map<UUID, Vec3> playerPositions = new ConcurrentHashMap<>();
 
@@ -50,6 +55,7 @@ public class ClientAudioEngine {
 
     // 処理スレッド
     private Thread processingThread;
+    private Thread reconnectionThread;
 
     private ClientAudioEngine() {
     }
@@ -65,55 +71,172 @@ public class ClientAudioEngine {
      * オーディオエンジンを開始
      */
     public void start(String serverHost, int serverPort) {
+        // サーバー情報を保存（再接続用）
+        lastServerHost = serverHost;
+        lastServerPort = serverPort;
+
+        // 初回接続を試みる
+        if (startInternal(serverHost, serverPort)) {
+            connectionFailed.set(false);
+            LOGGER.info("Client audio engine started successfully");
+        } else {
+            connectionFailed.set(true);
+            LOGGER.warn("Failed to start client audio engine, will retry every 5 seconds");
+            startReconnectionLoop();
+        }
+    }
+
+    /**
+     * 内部起動処理
+     */
+    private boolean startInternal(String serverHost, int serverPort) {
         if (running.get()) {
-            LOGGER.warn("Client audio engine is already running");
-            return;
+            LOGGER.debug("Client audio engine is already running");
+            return true;
         }
 
-        LOGGER.info("Starting client audio engine...");
+        try {
+            LOGGER.info("===== Starting Client Audio Engine =====");
+            LOGGER.info("Target server: {}:{}", serverHost, serverPort);
 
-        // コンポーネント初期化
-        microphone = new MicrophoneCapture();
-        vad = new VoiceActivityDetector();
-        highQualityEncoder = OpusCodec.createHighQualityEncoder();
-        lowQualityEncoder = OpusCodec.createLowQualityEncoder();
-        decoder = OpusCodec.createDecoder();
-        audioPlayer = new AudioPlayer();
-        udpNetwork = new UDPNetworkManager(0); // クライアントはランダムポート
-        acousticSimulation = new AcousticSimulationEngine();
+            // コンポーネント初期化
+            LOGGER.info("Initializing audio components...");
+            microphone = new MicrophoneCapture();
+            vad = new VoiceActivityDetector();
+            highQualityEncoder = OpusCodec.createHighQualityEncoder();
+            lowQualityEncoder = OpusCodec.createLowQualityEncoder();
+            decoder = OpusCodec.createDecoder();
+            audioPlayer = new AudioPlayer();
 
-        // UDP設定
-        udpNetwork.setServerAddress(serverHost, serverPort);
+            if (highQualityEncoder == null || lowQualityEncoder == null || decoder == null) {
+                throw new IllegalStateException("Failed to create Opus codecs");
+            }
 
-        // パケット受信リスナー
-        udpNetwork.addPacketListener("main", this::handleReceivedPacket);
+            LOGGER.info("Creating UDP network manager...");
+            udpNetwork = new UDPNetworkManager(0); // クライアントはランダムポート
+            acousticSimulation = new AcousticSimulationEngine();
 
-        // 起動
-        microphone.start();
-        audioPlayer.start();
-        udpNetwork.start();
+            // UDP設定
+            LOGGER.info("Setting server address: {}:{}", serverHost, serverPort);
+            udpNetwork.setServerAddress(serverHost, serverPort);
 
-        running.set(true);
+            // パケット受信リスナー
+            udpNetwork.addPacketListener("main", this::handleReceivedPacket);
 
-        // 処理スレッド開始
-        processingThread = new Thread(this::processingLoop, "Audio-Processing");
-        processingThread.setDaemon(true);
-        processingThread.start();
+            // 起動
+            LOGGER.info("Starting microphone capture...");
+            microphone.start();
 
-        LOGGER.info("Client audio engine started");
+            LOGGER.info("Starting audio player...");
+            audioPlayer.start();
+
+            LOGGER.info("Starting UDP network...");
+            udpNetwork.start();
+
+            if (!udpNetwork.isRunning()) {
+                throw new IllegalStateException("UDP network failed to start");
+            }
+
+            running.set(true);
+
+            // 処理スレッド開始
+            LOGGER.info("Starting audio processing thread...");
+            processingThread = new Thread(this::processingLoop, "Audio-Processing");
+            processingThread.setDaemon(true);
+            processingThread.start();
+
+            LOGGER.info("===== Client Audio Engine Started Successfully =====");
+            return true;
+        } catch (Exception e) {
+            LOGGER.error("===== Failed to Start Client Audio Engine =====", e);
+            LOGGER.error("Error type: {}", e.getClass().getName());
+            LOGGER.error("Error message: {}", e.getMessage());
+            cleanupFailedStart();
+            return false;
+        }
+    }
+
+    /**
+     * 起動失敗時のクリーンアップ
+     */
+    private void cleanupFailedStart() {
+        if (microphone != null) {
+            try {
+                microphone.stop();
+            } catch (Exception e) {
+                LOGGER.debug("Error stopping microphone during cleanup", e);
+            }
+        }
+        if (audioPlayer != null) {
+            try {
+                audioPlayer.stop();
+            } catch (Exception e) {
+                LOGGER.debug("Error stopping audio player during cleanup", e);
+            }
+        }
+        if (udpNetwork != null) {
+            try {
+                udpNetwork.stop();
+            } catch (Exception e) {
+                LOGGER.debug("Error stopping UDP network during cleanup", e);
+            }
+        }
+    }
+
+    /**
+     * 再接続ループを開始
+     */
+    private void startReconnectionLoop() {
+        if (reconnectionThread != null && reconnectionThread.isAlive()) {
+            LOGGER.debug("Reconnection thread is already running");
+            return; // 既に再接続ループが動いている
+        }
+
+        LOGGER.info("===== Starting Auto-Reconnection Loop =====");
+        LOGGER.info("Will attempt to reconnect to {}:{} every 5 seconds", lastServerHost, lastServerPort);
+
+        reconnectionThread = new Thread(() -> {
+            int attemptCount = 0;
+            while (connectionFailed.get() && lastServerHost != null) {
+                try {
+                    attemptCount++;
+                    LOGGER.info("----- Reconnection Attempt #{} -----", attemptCount);
+                    Thread.sleep(5000); // 5秒待機
+
+                    LOGGER.info("Attempting to reconnect to {}:{}...", lastServerHost, lastServerPort);
+                    if (startInternal(lastServerHost, lastServerPort)) {
+                        connectionFailed.set(false);
+                        LOGGER.info("***** Successfully reconnected to server after {} attempts *****", attemptCount);
+                        break;
+                    } else {
+                        LOGGER.warn("Reconnection attempt #{} failed, will retry in 5 seconds", attemptCount);
+                    }
+                } catch (InterruptedException e) {
+                    LOGGER.info("Reconnection loop interrupted");
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (Exception e) {
+                    LOGGER.error("Unexpected error in reconnection loop", e);
+                }
+            }
+            LOGGER.info("===== Auto-Reconnection Loop Ended =====");
+        }, "Audio-Reconnection");
+        reconnectionThread.setDaemon(true);
+        reconnectionThread.start();
     }
 
     /**
      * オーディオエンジンを停止
      */
     public void stop() {
-        if (!running.get()) {
+        if (!running.get() && !connectionFailed.get()) {
             return;
         }
 
         LOGGER.info("Stopping client audio engine...");
 
         running.set(false);
+        connectionFailed.set(false); // 再接続ループを停止
 
         if (microphone != null) {
             microphone.stop();
@@ -128,6 +251,16 @@ public class ClientAudioEngine {
         if (processingThread != null) {
             try {
                 processingThread.join(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        // 再接続スレッドを停止
+        if (reconnectionThread != null && reconnectionThread.isAlive()) {
+            reconnectionThread.interrupt();
+            try {
+                reconnectionThread.join(1000);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -351,5 +484,71 @@ public class ClientAudioEngine {
      */
     private Vec3 getPlayerPosition(UUID playerId) {
         return playerPositions.getOrDefault(playerId, Vec3.ZERO);
+    }
+
+    // ===== UI Support Methods =====
+
+    /**
+     * 現在の声量レベル（0.0～1.0）を取得
+     */
+    public float getCurrentVoiceLevel() {
+        if (vad == null || !running.get()) {
+            return 0.0f;
+        }
+        return vad.getCurrentLevel();
+    }
+
+    /**
+     * サーバー接続状態を取得
+     */
+    public boolean isServerConnected() {
+        return udpNetwork != null && running.get() && !connectionFailed.get();
+    }
+
+    /**
+     * 接続失敗状態かを取得
+     */
+    public boolean isConnectionFailed() {
+        return connectionFailed.get();
+    }
+
+    /**
+     * 発話中かを取得
+     */
+    public boolean isSpeaking() {
+        if (vad == null || !running.get() || muted) {
+            return false;
+        }
+        return vad.isVoiceDetected();
+    }
+
+    /**
+     * VAD閾値を更新
+     */
+    public void updateVadThreshold(double threshold) {
+        if (vad != null) {
+            vad.setThreshold(threshold);
+            LOGGER.info("VAD threshold updated to: {}", threshold);
+        }
+    }
+
+    /**
+     * 入力音量を更新
+     */
+    public void updateInputVolume(double volume) {
+        if (microphone != null) {
+            microphone.setInputGain(volume);
+            LOGGER.info("Input volume updated to: {}", volume);
+        }
+    }
+
+    /**
+     * 出力音量を更新
+     */
+    public void updateOutputVolume(double volume) {
+        if (audioPlayer != null) {
+            audioPlayer.setOutputGain(volume);
+            LOGGER.info("Output volume updated to: {}", volume);
+        }
     }
 }

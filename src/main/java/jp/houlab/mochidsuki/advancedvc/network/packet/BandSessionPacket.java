@@ -1,10 +1,12 @@
 package jp.houlab.mochidsuki.advancedvc.network.packet;
 
-import jp.houlab.mochidsuki.advancedvc.server.BandModeManager;
+import jp.houlab.mochidsuki.advancedvc.server.ServerAudioRouter;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -68,24 +70,26 @@ public class BandSessionPacket {
         context.enqueueWork(() -> {
             ServerPlayer player = context.getSender();
             if (player != null) {
-                BandModeManager manager = BandModeManager.getInstance();
+                ServerAudioRouter router = ServerAudioRouter.getInstance();
 
                 switch (action) {
                     case START:
                         // プレイヤーをコンダクターとしてセッション開始
-                        manager.startSession(player.getUUID());
+                        List<UUID> initialMembers = new ArrayList<>();
+                        initialMembers.add(player.getUUID());
+                        router.startBandSession(player.getUUID(), initialMembers);
                         break;
                     case END:
                         // セッション終了
-                        manager.endSession(conductorId);
+                        router.endBandSession();
                         break;
                     case JOIN:
-                        // セッションに参加
-                        manager.addMember(conductorId, player.getUUID());
+                        // セッションに参加 (TODO: ServerAudioRouterにメンバー追加APIが必要)
+                        // router.addMemberToBandSession(player.getUUID());
                         break;
                     case LEAVE:
-                        // セッションから離脱
-                        manager.removeMember(conductorId, player.getUUID());
+                        // セッションから離脱 (TODO: ServerAudioRouterにメンバー削除APIが必要)
+                        // router.removeMemberFromBandSession(player.getUUID());
                         break;
                 }
             }

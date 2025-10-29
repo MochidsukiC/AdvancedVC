@@ -11,6 +11,7 @@
   "key.advancedvc.mute": "ミュート/ミュート解除",
   "key.advancedvc.volume_up": "声量アップ",
   "key.advancedvc.volume_down": "声量ダウン",
+  "key.advancedvc.settings": "VC設定を開く",
 
   "itemGroup.advancedvc.advanced_vc_tab": "Advanced VC",
 

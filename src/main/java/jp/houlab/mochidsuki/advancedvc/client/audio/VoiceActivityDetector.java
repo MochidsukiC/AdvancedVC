@@ -8,10 +8,11 @@ import jp.houlab.mochidsuki.advancedvc.common.AudioConstants;
  */
 public class VoiceActivityDetector {
 
-    private final float threshold;
+    private float threshold;
     private final int minFrameCount;
     private int activeFrameCount = 0;
     private boolean isActive = false;
+    private float currentLevel = 0.0f;
 
     public VoiceActivityDetector(float threshold, int minFrameCount) {
         this.threshold = threshold;
@@ -34,6 +35,7 @@ public class VoiceActivityDetector {
 
         // RMS（二乗平均平方根）を計算
         float rms = calculateRMS(samples);
+        currentLevel = rms;
 
         // 閾値と比較
         if (rms > threshold) {
@@ -79,7 +81,21 @@ public class VoiceActivityDetector {
     /**
      * 閾値を動的に設定
      */
-    public void setThreshold(float threshold) {
-        // 実装は省略（必要に応じて追加）
+    public void setThreshold(double threshold) {
+        this.threshold = (float) threshold;
+    }
+
+    /**
+     * 現在の声量レベルを取得（0.0～1.0）
+     */
+    public float getCurrentLevel() {
+        return currentLevel;
+    }
+
+    /**
+     * 音声が検出されているかを取得
+     */
+    public boolean isVoiceDetected() {
+        return isActive;
     }
 }

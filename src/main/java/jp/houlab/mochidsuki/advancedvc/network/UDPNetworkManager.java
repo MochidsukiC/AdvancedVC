@@ -41,27 +41,24 @@ public class UDPNetworkManager {
     /**
      * UDPソケットを開始
      */
-    public void start() {
+    public void start() throws SocketException {
         if (running.get()) {
             LOGGER.warn("UDP Network Manager is already running");
             return;
         }
 
-        try {
-            socket = new DatagramSocket(port);
-            socket.setReceiveBufferSize(AudioConstants.NETWORK_BUFFER_SIZE);
-            socket.setSendBufferSize(AudioConstants.NETWORK_BUFFER_SIZE);
-            running.set(true);
+        socket = new DatagramSocket(port);
+        socket.setReceiveBufferSize(AudioConstants.NETWORK_BUFFER_SIZE);
+        socket.setSendBufferSize(AudioConstants.NETWORK_BUFFER_SIZE);
+        running.set(true);
 
-            // 受信スレッド開始
-            receiveThread = new Thread(this::receiveLoop, "UDP-Voice-Receiver");
-            receiveThread.setDaemon(true);
-            receiveThread.start();
+        // 受信スレッド開始
+        receiveThread = new Thread(this::receiveLoop, "UDP-Voice-Receiver");
+        receiveThread.setDaemon(true);
+        receiveThread.start();
 
-            LOGGER.info("UDP Network Manager started on port {}", port);
-        } catch (SocketException e) {
-            LOGGER.error("Failed to start UDP Network Manager", e);
-        }
+        LOGGER.info("UDP Network Manager started on port {} (bound to {})",
+                socket.getLocalPort(), socket.getLocalAddress());
     }
 
     /**
@@ -219,7 +216,10 @@ public class UDPNetworkManager {
         }
     }
 
+    /**
+     * UDPネットワークが動作中かを確認
+     */
     public boolean isRunning() {
-        return running.get();
+        return running.get() && socket != null && !socket.isClosed();
     }
 }

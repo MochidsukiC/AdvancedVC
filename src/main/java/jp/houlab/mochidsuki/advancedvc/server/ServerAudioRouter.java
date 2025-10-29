@@ -60,16 +60,28 @@ public class ServerAudioRouter {
 
         this.server = server;
 
-        LOGGER.info("Starting server audio router on port {}...", udpPort);
+        LOGGER.info("===== Starting Server Audio Router =====");
+        LOGGER.info("UDP Port: {}", udpPort);
 
-        // UDP初期化
-        udpNetwork = new UDPNetworkManager(udpPort);
-        udpNetwork.addPacketListener("router", this::handleReceivedPacket);
-        udpNetwork.start();
+        try {
+            // UDP初期化
+            udpNetwork = new UDPNetworkManager(udpPort);
+            udpNetwork.addPacketListener("router", this::handleReceivedPacket);
+            udpNetwork.start();
 
-        running.set(true);
+            if (!udpNetwork.isRunning()) {
+                throw new IllegalStateException("UDP network failed to start");
+            }
 
-        LOGGER.info("Server audio router started");
+            running.set(true);
+
+            LOGGER.info("===== Server Audio Router Started Successfully =====");
+        } catch (Exception e) {
+            LOGGER.error("===== Failed to Start Server Audio Router =====", e);
+            LOGGER.error("Error type: {}", e.getClass().getName());
+            LOGGER.error("Error message: {}", e.getMessage());
+            LOGGER.error("Voice chat will not be available!");
+        }
     }
 
     /**
