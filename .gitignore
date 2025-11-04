@@ -1,0 +1,39 @@
+# Gradle
+.gradle/
+build/
+out/
+classes/
+
+# Eclipse
+*.launch
+.settings/
+.metadata/
+.classpath
+.project
+bin/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Mac
+.DS_Store
+
+# VS Code
+.vscode/
+
+# Minecraft/Forge
+run/
+!run/.gitkeep
+
+# External libraries for development (copied by Gradle task)
+run/libs/
+
+# Generated files
+src/generated/
+
+# Logs
+logs/
+*.log
