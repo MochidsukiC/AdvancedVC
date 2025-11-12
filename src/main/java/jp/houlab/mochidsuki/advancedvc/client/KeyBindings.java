@@ -107,6 +107,11 @@ public class KeyBindings {
             VolumeLevel next = current.next();
             engine.setVolumeLevel(next);
 
+            // 設定を保存
+            ClientConfig cfg = ClientConfig.get();
+            cfg.volumeLevel = next.name();
+            cfg.save();
+
             mc.player.displayClientMessage(
                     net.minecraft.network.chat.Component.literal("声量: " + next.getDisplayName()),
                     true
@@ -119,6 +124,11 @@ public class KeyBindings {
             VolumeLevel previous = current.previous();
             engine.setVolumeLevel(previous);
 
+            // 設定を保存
+            ClientConfig cfg = ClientConfig.get();
+            cfg.volumeLevel = previous.name();
+            cfg.save();
+
             mc.player.displayClientMessage(
                     net.minecraft.network.chat.Component.literal("声量: " + previous.getDisplayName()),
                     true
@@ -126,7 +136,7 @@ public class KeyBindings {
         }
 
         // 設定画面を開く
-        if (KEY_SETTINGS.consumeClick()) {
+        if (event.getAction() == GLFW.GLFW_PRESS && KEY_SETTINGS.matches(event.getKey(), event.getScanCode())) {
             mc.setScreen(new VoiceSettingsScreen(mc.screen));
         }
     }

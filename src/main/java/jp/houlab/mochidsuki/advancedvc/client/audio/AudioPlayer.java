@@ -29,12 +29,15 @@ public class AudioPlayer {
     private SourceDataLine outputLine;
     private Thread playbackThread;
     private volatile boolean running = false;
+    private volatile double outputGain = 1.0;
+    private volatile String preferredMixerName = null;
 
-    // オーディオフォーマット
+    // オーディオフォーマット（ステレオ出力）
+    // 入力はモノラルだが、出力は3Dパンニングのためステレオにする
     private final AudioFormat audioFormat = new AudioFormat(
             AudioConstants.SAMPLE_RATE,
             16,
-            AudioConstants.CHANNELS,
+            2,  // ステレオ出力
             true,
             false
     );
@@ -51,12 +54,26 @@ public class AudioPlayer {
         try {
             DataLine.Info info = new DataLine.Info(SourceDataLine.class, audioFormat);
 
-            if (!AudioSystem.isLineSupported(info)) {
-                LOGGER.error("Audio output not supported");
-                return;
+            SourceDataLine line = null;
+            if (preferredMixerName != null && !preferredMixerName.isBlank()) {
+                for (Mixer.Info mi : AudioSystem.getMixerInfo()) {
+                    if (mi.getName().equals(preferredMixerName)) {
+                        Mixer mixer = AudioSystem.getMixer(mi);
+                        if (mixer.isLineSupported(info)) {
+                            line = (SourceDataLine) mixer.getLine(info);
+                            break;
+                        }
+                    }
+                }
             }
-
-            outputLine = (SourceDataLine) AudioSystem.getLine(info);
+            if (line == null) {
+                if (!AudioSystem.isLineSupported(info)) {
+                    LOGGER.error("Audio output not supported");
+                    return;
+                }
+                line = (SourceDataLine) AudioSystem.getLine(info);
+            }
+            outputLine = line;
             outputLine.open(audioFormat, AudioConstants.NETWORK_BUFFER_SIZE);
             outputLine.start();
 
@@ -134,26 +151,27 @@ public class AudioPlayer {
     }
 
     /**
-     * 再生ループ
+     * 再生ループ（ステレオ出力）
      */
     private void playbackLoop() {
-        int frameSizeBytes = AudioConstants.FRAME_SIZE * AudioConstants.CHANNELS * 2;
-
         while (running) {
             try {
-                // ミキシングバッファ
-                int[] mixBuffer = new int[AudioConstants.FRAME_SIZE];
+                // ステレオミキシングバッファ（インターリーブ: L, R, L, R, ...）
+                int[] mixBuffer = new int[AudioConstants.FRAME_SIZE * 2];
 
-                // ポジショナルオーディオをミキシング
+                // ポジショナルオーディオをミキシング（ステレオパンニング適用）
                 mixPositionalAudio(mixBuffer);
 
-                // 非ポジショナルオーディオをミキシング
+                // 非ポジショナルオーディオをミキシング（センター定位）
                 mixNonPositionalAudio(mixBuffer);
 
-                // int[] → short[] に変換してクリッピング
-                short[] outputSamples = new short[AudioConstants.FRAME_SIZE];
-                for (int i = 0; i < AudioConstants.FRAME_SIZE; i++) {
+                // int[] → short[] に変換してクリッピング + 出力ゲイン適用
+                short[] outputSamples = new short[AudioConstants.FRAME_SIZE * 2];
+                for (int i = 0; i < AudioConstants.FRAME_SIZE * 2; i++) {
                     int sample = mixBuffer[i];
+                    if (outputGain != 1.0) {
+                        sample = (int) Math.round(sample * outputGain);
+                    }
                     // クリッピング
                     if (sample > Short.MAX_VALUE) {
                         sample = Short.MAX_VALUE;
@@ -178,7 +196,8 @@ public class AudioPlayer {
     }
 
     /**
-     * ポジショナルオーディオをミキシング
+     * ポジショナルオーディオをミキシング（HRTF: ITD/ILD適用）
+     * Phase 3拡張版: 両耳間時間差（ITD）と両耳間レベル差（ILD）を追加
      */
     private void mixPositionalAudio(int[] mixBuffer) {
         Minecraft mc = Minecraft.getInstance();
@@ -186,43 +205,88 @@ public class AudioPlayer {
             return;
         }
 
-        Vec3 listenerPos = mc.player.position();
+        Vec3 listenerPos = mc.player.position().add(0, 1.5, 0); // 耳の高さ
+        float listenerYaw = mc.player.getYRot(); // プレイヤーの向き（度数法）
+
+        // 頭部の幅（耳間距離）: 約17cm
+        final float HEAD_WIDTH = 0.17f; // m
+        final float SOUND_SPEED = 343.0f; // m/s
 
         audioStreams.forEach((playerId, stream) -> {
             short[] samples = stream.audioQueue.poll();
             if (samples != null && stream.position != null) {
-                // 距離減衰を計算
-                double distance = listenerPos.distanceTo(stream.position);
-                float volume = calculateDistanceAttenuation(distance);
+                // 音源方向の計算（水平面）
+                Vec3 sourcePos = stream.position.add(0, 1.5, 0); // 音源の口の高さ
+                double dx = sourcePos.x - listenerPos.x;
+                double dz = sourcePos.z - listenerPos.z;
+                double distance = Math.sqrt(dx * dx + dz * dz);
 
-                // 3Dポジショナル処理（簡易版）
-                // TODO: より高度な3Dオーディオ処理（HRTF等）
-                for (int i = 0; i < Math.min(samples.length, mixBuffer.length); i++) {
-                    mixBuffer[i] += (int) (samples[i] * volume);
+                // 音源の角度（ラジアン、Minecraft座標系: +Z=南, +X=東）
+                double angleToSource = Math.atan2(dz, dx); // -π ～ +π
+
+                // 相対角度（プレイヤーの正面を0とする）
+                double relativeAngle = angleToSource - Math.toRadians(listenerYaw - 90);
+
+                // -π ～ +π の範囲に正規化
+                while (relativeAngle > Math.PI) relativeAngle -= 2 * Math.PI;
+                while (relativeAngle < -Math.PI) relativeAngle += 2 * Math.PI;
+
+                // パン値計算（-1.0=左, 0.0=中央, +1.0=右）
+                float pan = (float) Math.sin(relativeAngle);
+                pan = Math.max(-1.0f, Math.min(1.0f, pan)); // クランプ
+
+                // === ITD (Interaural Time Difference): 両耳間時間差 ===
+                // 音源が左にある場合、左耳に先に到達する
+                // ITD(秒) = (頭部幅 / 音速) × sin(角度)
+                float itdSeconds = (HEAD_WIDTH / SOUND_SPEED) * pan;
+                int itdSamples = (int) (itdSeconds * AudioConstants.SAMPLE_RATE);
+                itdSamples = Math.max(-10, Math.min(10, itdSamples)); // ±10サンプルに制限
+
+                // === ILD (Interaural Level Difference): 両耳間レベル差 ===
+                // 頭部による遮蔽（Shadow Zone Model）
+                // 反対側の耳は-6dB～-20dB程度減衰
+                float shadowAttenuation = Math.abs(pan) * 0.7f; // 0.0～0.7の範囲
+                float leftILD = pan > 0 ? shadowAttenuation : 0f;  // 右にある場合、左耳が減衰
+                float rightILD = pan < 0 ? shadowAttenuation : 0f; // 左にある場合、右耳が減衰
+
+                // Equal Power Panningとの組み合わせ
+                float leftGain = (float) Math.sqrt((1.0f - pan) / 2.0f) * (1.0f - leftILD);
+                float rightGain = (float) Math.sqrt((1.0f + pan) / 2.0f) * (1.0f - rightILD);
+
+                // ステレオミキシング（ITD適用、簡略化版）
+                // TODO: ITD実装を一時的に簡略化（範囲外アクセスを防ぐ）
+                for (int i = 0; i < samples.length; i++) {
+                    int monoSample = samples[i];
+
+                    // 左チャンネル
+                    int leftIndex = i * 2;
+                    if (leftIndex < mixBuffer.length) {
+                        mixBuffer[leftIndex] += (int) (monoSample * leftGain);
+                    }
+
+                    // 右チャンネル
+                    int rightIndex = i * 2 + 1;
+                    if (rightIndex < mixBuffer.length) {
+                        mixBuffer[rightIndex] += (int) (monoSample * rightGain);
+                    }
                 }
             }
         });
     }
 
     /**
-     * 非ポジショナルオーディオをミキシング
+     * 非ポジショナルオーディオをミキシング（センター定位）
      */
     private void mixNonPositionalAudio(int[] mixBuffer) {
         short[] samples = nonPositionalQueue.poll();
         if (samples != null) {
-            for (int i = 0; i < Math.min(samples.length, mixBuffer.length); i++) {
-                mixBuffer[i] += samples[i];
+            // センター定位（L/R均等）
+            for (int i = 0; i < samples.length; i++) {
+                int monoSample = samples[i];
+                mixBuffer[i * 2] += monoSample;     // Left
+                mixBuffer[i * 2 + 1] += monoSample; // Right
             }
         }
-    }
-
-    /**
-     * 距離減衰を計算
-     */
-    private float calculateDistanceAttenuation(double distance) {
-        // 逆二乗則に基づく減衰
-        float attenuation = (float) (1.0 / (1.0 + AudioConstants.ATTENUATION_FACTOR * distance * distance));
-        return Math.max(attenuation, AudioConstants.MIN_AUDIBLE_VOLUME);
     }
 
     /**
@@ -253,8 +317,14 @@ public class AudioPlayer {
      * 出力ゲインを設定（0.0～1.0）
      */
     public void setOutputGain(double gain) {
-        // TODO: 出力ゲインの実装
-        // 実際の実装では、再生するサンプルに対してゲインを適用する必要があります
-        LOGGER.info("Output gain set to: {}", gain);
+        this.outputGain = Math.max(0.0, Math.min(2.0, gain));
+        LOGGER.info("Output gain set to: {}", this.outputGain);
+    }
+
+    /**
+     * 使用する出力のミキサー名を設定（開始前に設定）
+     */
+    public void setPreferredMixerName(String mixerName) {
+        this.preferredMixerName = mixerName;
     }
 }

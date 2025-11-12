@@ -46,9 +46,10 @@ public class VoicePacket {
      */
     public byte[] serialize() {
         // パケットサイズ計算
-        int baseSize = 1 + 16 + 2 + 1 + 1 + 4 + 2 + audioData.length;
+        // packetType(1) + UUID(16) + seq(2) + mode(1) + volume(1) + freq(4) + audioLen(2) + isFromSpeaker(1) + audioData
+        int baseSize = 1 + 16 + 2 + 1 + 1 + 4 + 2 + 1 + audioData.length;
         if (isFromSpeaker) {
-            baseSize += 1 + 8 + 8 + 8; // フラグ + 座標3つ
+            baseSize += 8 + 8 + 8; // 座標3つ
         }
 
         ByteBuffer buffer = ByteBuffer.allocate(baseSize);

@@ -25,6 +25,10 @@ public class MicrophoneCapture {
     // オーディオフレームのキュー
     private final BlockingQueue<short[]> audioFrameQueue = new LinkedBlockingQueue<>(100);
 
+    // 入力ゲイン（0.0～2.0、デフォルト1.0）
+    private volatile double inputGain = 1.0;
+    private volatile String preferredMixerName = null;
+
     // オーディオフォーマット
     private final AudioFormat audioFormat = new AudioFormat(
             AudioConstants.SAMPLE_RATE,
@@ -44,15 +48,40 @@ public class MicrophoneCapture {
         }
 
         try {
+            // 利用可能なマイクデバイスをログに出力
+            logAvailableAudioDevices();
+
             // マイクデバイスを取得
             DataLine.Info info = new DataLine.Info(TargetDataLine.class, audioFormat);
 
-            if (!AudioSystem.isLineSupported(info)) {
-                LOGGER.error("Microphone not supported");
-                return;
+            TargetDataLine line = null;
+            // 指定ミキサーがあれば優先
+            if (preferredMixerName != null && !preferredMixerName.isBlank()) {
+                for (Mixer.Info mi : AudioSystem.getMixerInfo()) {
+                    if (mi.getName().equals(preferredMixerName)) {
+                        Mixer mixer = AudioSystem.getMixer(mi);
+                        if (mixer.isLineSupported(info)) {
+                            line = (TargetDataLine) mixer.getLine(info);
+                            break;
+                        }
+                    }
+                }
+            }
+            // フォールバック: デフォルト
+            if (line == null) {
+                if (!AudioSystem.isLineSupported(info)) {
+                    LOGGER.error("Microphone not supported");
+                    return;
+                }
+                line = (TargetDataLine) AudioSystem.getLine(info);
+            }
+            microphone = line;
+
+            // 使用するマイクデバイスをログに出力
+            if (microphone != null && microphone.getLineInfo() != null) {
+                LOGGER.info("Using microphone device: {}", microphone.getLineInfo().toString());
             }
 
-            microphone = (TargetDataLine) AudioSystem.getLine(info);
             microphone.open(audioFormat, AudioConstants.NETWORK_BUFFER_SIZE);
             microphone.start();
 
@@ -114,6 +143,11 @@ public class MicrophoneCapture {
                     // byte[] → short[] に変換
                     short[] samples = bytesToShorts(buffer, bytesRead);
 
+                    // 入力ゲインを適用
+                    if (inputGain != 1.0) {
+                        applyGain(samples, inputGain);
+                    }
+
                     // キューに追加（キューが満杯の場合は古いフレームを破棄）
                     if (!audioFrameQueue.offer(samples)) {
                         audioFrameQueue.poll(); // 古いフレームを削除
@@ -138,6 +172,23 @@ public class MicrophoneCapture {
                 .asShortBuffer()
                 .get(shorts);
         return shorts;
+    }
+
+    /**
+     * サンプルにゲインを適用（クリッピング防止付き）
+     */
+    private void applyGain(short[] samples, double gain) {
+        for (int i = 0; i < samples.length; i++) {
+            double amplified = samples[i] * gain;
+            // クリッピング防止
+            if (amplified > Short.MAX_VALUE) {
+                samples[i] = Short.MAX_VALUE;
+            } else if (amplified < Short.MIN_VALUE) {
+                samples[i] = Short.MIN_VALUE;
+            } else {
+                samples[i] = (short) amplified;
+            }
+        }
     }
 
     /**
@@ -174,11 +225,46 @@ public class MicrophoneCapture {
     }
 
     /**
-     * 入力ゲインを設定（0.0～1.0）
+     * 利用可能なオーディオデバイスをログに出力
+     */
+    private void logAvailableAudioDevices() {
+        LOGGER.info("===== Available Audio Devices =====");
+        Mixer.Info[] mixers = AudioSystem.getMixerInfo();
+
+        for (Mixer.Info mixerInfo : mixers) {
+            Mixer mixer = AudioSystem.getMixer(mixerInfo);
+
+            // 入力デバイス（TargetDataLine）をサポートしているか確認
+            Line.Info[] targetLines = mixer.getTargetLineInfo();
+            boolean hasInput = false;
+            for (Line.Info lineInfo : targetLines) {
+                if (lineInfo.getLineClass().equals(TargetDataLine.class)) {
+                    hasInput = true;
+                    break;
+                }
+            }
+
+            if (hasInput) {
+                LOGGER.info("  [INPUT] {}", mixerInfo.getName());
+                LOGGER.info("          Description: {}", mixerInfo.getDescription());
+            }
+        }
+        LOGGER.info("===================================");
+    }
+
+    /**
+     * 入力ゲインを設定（0.0～2.0、1.0が標準）
      */
     public void setInputGain(double gain) {
-        // TODO: 入力ゲインの実装
-        // 実際の実装では、キャプチャしたサンプルに対してゲインを適用する必要があります
-        LOGGER.info("Input gain set to: {}", gain);
+        // ゲインの範囲を制限（0.0～2.0）
+        this.inputGain = Math.max(0.0, Math.min(2.0, gain));
+        LOGGER.info("Input gain set to: {}", this.inputGain);
+    }
+
+    /**
+     * 使用するマイクのミキサー名を設定（開始前に設定）
+     */
+    public void setPreferredMixerName(String mixerName) {
+        this.preferredMixerName = mixerName;
     }
 }

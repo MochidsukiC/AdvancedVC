@@ -1,8 +1,11 @@
 package jp.houlab.mochidsuki.advancedvc.client.gui;
 
 import jp.houlab.mochidsuki.advancedvc.Config;
+import jp.houlab.mochidsuki.advancedvc.client.ClientConfig;
 import jp.houlab.mochidsuki.advancedvc.client.audio.ClientAudioEngine;
 import jp.houlab.mochidsuki.advancedvc.client.audio.MicrophoneCapture;
+import jp.houlab.mochidsuki.advancedvc.client.audio.AudioPlayer;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
@@ -11,7 +14,10 @@ import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.network.chat.Component;
 
 import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.Line;
 import javax.sound.sampled.Mixer;
+import javax.sound.sampled.SourceDataLine;
+import javax.sound.sampled.TargetDataLine;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -26,15 +32,17 @@ public class VoiceSettingsScreen extends Screen {
 
     private int selectedInputIndex = 0;
     private int selectedOutputIndex = 0;
-    private double vadThreshold = Config.vadThreshold;
-    private double inputVolume = 1.0;
-    private double outputVolume = 1.0;
+    private double vadThreshold = ClientConfig.get().vadThreshold;
+    private double inputVolume = ClientConfig.get().inputVolume;
+    private double outputVolume = ClientConfig.get().outputVolume;
 
     private Button inputDeviceButton;
     private Button outputDeviceButton;
     private VadThresholdSlider vadSlider;
     private VolumeSlider inputVolumeSlider;
     private VolumeSlider outputVolumeSlider;
+    private volatile boolean micTesting = false;
+    private Thread micTestThread;
 
     public VoiceSettingsScreen(Screen lastScreen) {
         super(Component.literal("VC設定"));
@@ -59,18 +67,50 @@ public class VoiceSettingsScreen extends Screen {
             try {
                 Mixer mixer = AudioSystem.getMixer(mixerInfo);
 
-                // 入力デバイス（マイク）
-                if (mixer.getTargetLineInfo().length > 0) {
-                    inputDevices.add(mixerInfo.getName());
+                boolean supportsInput = false;
+                boolean supportsOutput = false;
+
+                // Mixerがサポートするラインタイプを確認
+                Line.Info[] targetLines = mixer.getTargetLineInfo();
+                Line.Info[] sourceLines = mixer.getSourceLineInfo();
+
+                // 入力デバイス（マイク）: TargetDataLineをサポートしているか
+                for (Line.Info lineInfo : targetLines) {
+                    if (lineInfo.getLineClass().equals(TargetDataLine.class)) {
+                        supportsInput = true;
+                        break;
+                    }
                 }
 
-                // 出力デバイス（スピーカー）
-                if (mixer.getSourceLineInfo().length > 0) {
+                // 出力デバイス（スピーカー）: SourceDataLineをサポートしているか
+                for (Line.Info lineInfo : sourceLines) {
+                    if (lineInfo.getLineClass().equals(SourceDataLine.class)) {
+                        supportsOutput = true;
+                        break;
+                    }
+                }
+
+                // 対応するリストに追加
+                if (supportsInput) {
+                    inputDevices.add(mixerInfo.getName());
+                }
+                if (supportsOutput) {
                     outputDevices.add(mixerInfo.getName());
                 }
             } catch (Exception e) {
                 // スキップ
             }
+        }
+        // 保存済みデバイスに合わせてインデックスを初期化
+        String savedIn = ClientConfig.get().inputDevice;
+        String savedOut = ClientConfig.get().outputDevice;
+        if (savedIn != null) {
+            int idx = inputDevices.indexOf(savedIn);
+            if (idx >= 0) selectedInputIndex = idx;
+        }
+        if (savedOut != null) {
+            int idx = outputDevices.indexOf(savedOut);
+            if (idx >= 0) selectedOutputIndex = idx;
         }
     }
 
@@ -168,21 +208,31 @@ public class VoiceSettingsScreen extends Screen {
 
         // VAD閾値を更新・保存
         vadThreshold = vadSlider.getThreshold();
-        Config.saveVadThreshold(vadThreshold);
+        ClientConfig cfg = ClientConfig.get();
+        cfg.vadThreshold = vadThreshold;
 
         // 音量を更新
         inputVolume = inputVolumeSlider.getVolume();
         outputVolume = outputVolumeSlider.getVolume();
+        cfg.inputVolume = inputVolume;
+        cfg.outputVolume = outputVolume;
+
+        // デバイス選択を保存（適用には再初期化が必要）
+        cfg.inputDevice = inputDevices.get(selectedInputIndex);
+        cfg.outputDevice = outputDevices.get(selectedOutputIndex);
+
+        // 保存
+        cfg.save();
 
         // ClientAudioEngineに適用
         if (engine.isRunning()) {
             engine.updateVadThreshold(vadThreshold);
             engine.updateInputVolume(inputVolume);
             engine.updateOutputVolume(outputVolume);
+            engine.applySelectedAudioDevicesFromConfig();
         }
 
-        // TODO: デバイス変更の実装（エンジンの再起動が必要）
-        // TODO: 音量設定の永続化（現在は一時的な設定のみ）
+        // 注意: デバイス変更は次回エンジン起動時に反映されます
     }
 
     /**
@@ -191,7 +241,7 @@ public class VoiceSettingsScreen extends Screen {
     private void resetToDefaults() {
         selectedInputIndex = 0;
         selectedOutputIndex = 0;
-        vadThreshold = 0.02;
+        vadThreshold = 0.01;
         inputVolume = 1.0;
         outputVolume = 1.0;
 
@@ -207,7 +257,50 @@ public class VoiceSettingsScreen extends Screen {
      * マイクテスト
      */
     private void testMicrophone() {
-        // TODO: マイクテスト機能の実装
+        if (micTesting) {
+            micTesting = false; // ループを止める
+            return;
+        }
+
+        // エンジン稼働中はテストを抑止（デバイス占有の可能性）
+        if (ClientAudioEngine.getInstance().isRunning()) {
+            if (this.minecraft != null && this.minecraft.player != null) {
+                this.minecraft.player.displayClientMessage(Component.literal("マイクテストは音声エンジン停止時のみ利用できます"), true);
+            }
+            return;
+        }
+
+        // 選択デバイスで簡易ループバック（3秒）
+        final String inName = inputDevices.get(selectedInputIndex);
+        final String outName = outputDevices.get(selectedOutputIndex);
+
+        micTesting = true;
+        micTestThread = new Thread(() -> {
+            MicrophoneCapture testMic = new MicrophoneCapture();
+            AudioPlayer testPlayer = new AudioPlayer();
+            try {
+                if (!"デフォルト".equals(inName)) testMic.setPreferredMixerName(inName);
+                if (!"デフォルト".equals(outName)) testPlayer.setPreferredMixerName(outName);
+
+                testMic.start();
+                testPlayer.start();
+
+                long end = System.currentTimeMillis() + 3000; // 3秒間
+                while (micTesting && System.currentTimeMillis() < end) {
+                    short[] s = testMic.getNextFrame(50);
+                    if (s != null) testPlayer.addNonPositionalAudio(s);
+                }
+            } finally {
+                try { testMic.stop(); } catch (Exception ignored) {}
+                try { testPlayer.stop(); } catch (Exception ignored) {}
+                micTesting = false;
+                if (Minecraft.getInstance().player != null) {
+                    Minecraft.getInstance().player.displayClientMessage(Component.literal("マイクテスト完了"), true);
+                }
+            }
+        }, "AVC-MicTest");
+        micTestThread.setDaemon(true);
+        micTestThread.start();
     }
 
     @Override
@@ -215,10 +308,66 @@ public class VoiceSettingsScreen extends Screen {
         return false;
     }
 
+    @Override
+    public void onClose() {
+        // ESCなどで閉じた場合も設定を適用・保存する
+        try {
+            applySettings();
+        } catch (Exception ignored) {
+        }
+        if (this.minecraft != null) {
+            this.minecraft.setScreen(lastScreen);
+        }
+    }
+
+    @Override
+    public void removed() {
+        // 画面が閉じられる全経路で最終的に保存を保証
+        try {
+            applySettings();
+        } catch (Exception ignored) {
+        }
+        super.removed();
+    }
+
+    // ==== リアルタイム更新コールバック ====
+    private void onVadChanged(double newThreshold) {
+        this.vadThreshold = newThreshold;
+        ClientConfig cfg = ClientConfig.get();
+        cfg.vadThreshold = newThreshold;
+        cfg.save();
+        ClientAudioEngine engine = ClientAudioEngine.getInstance();
+        if (engine.isRunning()) {
+            engine.updateVadThreshold(newThreshold);
+        }
+    }
+
+    private void onInputVolumeChanged(double newVolume) {
+        this.inputVolume = newVolume;
+        ClientConfig cfg = ClientConfig.get();
+        cfg.inputVolume = newVolume;
+        cfg.save();
+        ClientAudioEngine engine = ClientAudioEngine.getInstance();
+        if (engine.isRunning()) {
+            engine.updateInputVolume(newVolume);
+        }
+    }
+
+    private void onOutputVolumeChanged(double newVolume) {
+        this.outputVolume = newVolume;
+        ClientConfig cfg = ClientConfig.get();
+        cfg.outputVolume = newVolume;
+        cfg.save();
+        ClientAudioEngine engine = ClientAudioEngine.getInstance();
+        if (engine.isRunning()) {
+            engine.updateOutputVolume(newVolume);
+        }
+    }
+
     /**
      * VAD閾値スライダー
      */
-    private static class VadThresholdSlider extends AbstractSliderButton {
+    private class VadThresholdSlider extends AbstractSliderButton {
         private double threshold;
 
         public VadThresholdSlider(int x, int y, int width, int height, double initialThreshold) {
@@ -236,6 +385,8 @@ public class VoiceSettingsScreen extends Screen {
         protected void applyValue() {
             this.threshold = 0.001 + (this.value * 0.099); // 0.001 ~ 0.1
             updateMessage();
+            // Realtime apply
+            VoiceSettingsScreen.this.onVadChanged(this.threshold);
         }
 
         public double getThreshold() {
@@ -252,7 +403,7 @@ public class VoiceSettingsScreen extends Screen {
     /**
      * ボリュームスライダー
      */
-    private static class VolumeSlider extends AbstractSliderButton {
+    private class VolumeSlider extends AbstractSliderButton {
         private final Component label;
         private double volume;
 
@@ -272,6 +423,12 @@ public class VoiceSettingsScreen extends Screen {
         protected void applyValue() {
             this.volume = this.value;
             updateMessage();
+            // Realtime apply
+            if (VoiceSettingsScreen.this.inputVolumeSlider == this) {
+                VoiceSettingsScreen.this.onInputVolumeChanged(this.volume);
+            } else if (VoiceSettingsScreen.this.outputVolumeSlider == this) {
+                VoiceSettingsScreen.this.onOutputVolumeChanged(this.volume);
+            }
         }
 
         public double getVolume() {

@@ -31,6 +31,9 @@ run/
 # External libraries for development (copied by Gradle task)
 run/libs/
 
+# Local library files (downloaded from Maven Central)
+libs/
+
 # Generated files
 src/generated/
 

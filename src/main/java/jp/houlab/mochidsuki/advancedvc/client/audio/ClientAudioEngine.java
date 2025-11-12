@@ -30,7 +30,9 @@ public class ClientAudioEngine {
     private OpusCodec.Encoder highQualityEncoder;
     private OpusCodec.Encoder lowQualityEncoder;
     private OpusCodec.Decoder decoder;
-    private AudioPlayer audioPlayer;
+    private AudioPlayerOpenAL audioPlayerOpenAL;
+    private AudioPlayerSteamAudio audioPlayerSteamAudio;
+    private boolean usingSteamAudio = false; // 現在使用中のオーディオプレイヤー
     private UDPNetworkManager udpNetwork;
     private AcousticSimulationEngine acousticSimulation;
 
@@ -56,6 +58,7 @@ public class ClientAudioEngine {
     // 処理スレッド
     private Thread processingThread;
     private Thread reconnectionThread;
+    private Thread keepaliveThread;
 
     private ClientAudioEngine() {
     }
@@ -103,13 +106,59 @@ public class ClientAudioEngine {
             LOGGER.info("Initializing audio components...");
             microphone = new MicrophoneCapture();
             vad = new VoiceActivityDetector();
-            highQualityEncoder = OpusCodec.createHighQualityEncoder();
-            lowQualityEncoder = OpusCodec.createLowQualityEncoder();
-            decoder = OpusCodec.createDecoder();
-            audioPlayer = new AudioPlayer();
 
-            if (highQualityEncoder == null || lowQualityEncoder == null || decoder == null) {
-                throw new IllegalStateException("Failed to create Opus codecs");
+            // クライアント設定を適用
+            jp.houlab.mochidsuki.advancedvc.client.ClientConfig cfg = jp.houlab.mochidsuki.advancedvc.client.ClientConfig.get();
+            if (cfg.inputDevice != null) {
+                microphone.setPreferredMixerName(cfg.inputDevice);
+            }
+            vad.setThreshold(cfg.vadThreshold);
+
+            // 保存された声量レベルを読み込み
+            try {
+                this.currentVolume = jp.houlab.mochidsuki.advancedvc.common.VolumeLevel.valueOf(cfg.volumeLevel);
+            } catch (Exception e) {
+                this.currentVolume = jp.houlab.mochidsuki.advancedvc.common.VolumeLevel.NORMAL;
+            }
+
+            // Opus codecs initialization with error handling
+            // Note: In development environment, Concentus library may not be loaded by Forge's ModuleClassLoader
+            try {
+                highQualityEncoder = OpusCodec.createHighQualityEncoder();
+                lowQualityEncoder = OpusCodec.createLowQualityEncoder();
+                decoder = OpusCodec.createDecoder();
+
+                if (highQualityEncoder == null || lowQualityEncoder == null || decoder == null) {
+                    throw new IllegalStateException("Failed to create Opus codecs");
+                }
+                LOGGER.info("Opus codecs initialized successfully");
+            } catch (NoClassDefFoundError | Exception e) {
+                LOGGER.warn("========================================");
+                LOGGER.warn("Opus codec library (Concentus) not available!");
+                LOGGER.warn("This is expected in development environment.");
+                LOGGER.warn("Audio encoding/decoding will be disabled.");
+                LOGGER.warn("For production builds, this will work correctly.");
+                LOGGER.warn("Error: {}", e.getMessage());
+                LOGGER.warn("========================================");
+                highQualityEncoder = null;
+                lowQualityEncoder = null;
+                decoder = null;
+            }
+
+            // オーディオプレイヤーの選択（Steam Audio or OpenAL EFX）
+            usingSteamAudio = cfg.useSteamAudio;
+            if (usingSteamAudio) {
+                LOGGER.info("Using Steam Audio for binaural playback");
+                audioPlayerSteamAudio = new AudioPlayerSteamAudio();
+                if (cfg.outputDevice != null) {
+                    audioPlayerSteamAudio.setPreferredMixerName(cfg.outputDevice);
+                }
+            } else {
+                LOGGER.info("Using OpenAL EFX for spatial audio");
+                audioPlayerOpenAL = new AudioPlayerOpenAL();
+                if (cfg.outputDevice != null) {
+                    audioPlayerOpenAL.setPreferredMixerName(cfg.outputDevice);
+                }
             }
 
             LOGGER.info("Creating UDP network manager...");
@@ -128,7 +177,15 @@ public class ClientAudioEngine {
             microphone.start();
 
             LOGGER.info("Starting audio player...");
-            audioPlayer.start();
+            if (usingSteamAudio) {
+                audioPlayerSteamAudio.start();
+                audioPlayerSteamAudio.setOutputGain(cfg.outputVolume);
+            } else {
+                audioPlayerOpenAL.start();
+                audioPlayerOpenAL.setOutputGain(cfg.outputVolume);
+            }
+            // 音量を反映
+            microphone.setInputGain(cfg.inputVolume);
 
             LOGGER.info("Starting UDP network...");
             udpNetwork.start();
@@ -144,6 +201,15 @@ public class ClientAudioEngine {
             processingThread = new Thread(this::processingLoop, "Audio-Processing");
             processingThread.setDaemon(true);
             processingThread.start();
+
+            // キープアライブスレッド開始
+            LOGGER.info("Starting keepalive thread...");
+            keepaliveThread = new Thread(this::keepaliveLoop, "Audio-Keepalive");
+            keepaliveThread.setDaemon(true);
+            keepaliveThread.start();
+
+            // 初回のHELLOパケットを即座に送信してサーバーに登録
+            sendHelloPacket();
 
             LOGGER.info("===== Client Audio Engine Started Successfully =====");
             return true;
@@ -167,11 +233,18 @@ public class ClientAudioEngine {
                 LOGGER.debug("Error stopping microphone during cleanup", e);
             }
         }
-        if (audioPlayer != null) {
+        if (audioPlayerOpenAL != null) {
             try {
-                audioPlayer.stop();
+                audioPlayerOpenAL.stop();
             } catch (Exception e) {
-                LOGGER.debug("Error stopping audio player during cleanup", e);
+                LOGGER.debug("Error stopping OpenAL audio player during cleanup", e);
+            }
+        }
+        if (audioPlayerSteamAudio != null) {
+            try {
+                audioPlayerSteamAudio.stop();
+            } catch (Exception e) {
+                LOGGER.debug("Error stopping Steam Audio player during cleanup", e);
             }
         }
         if (udpNetwork != null) {
@@ -241,8 +314,11 @@ public class ClientAudioEngine {
         if (microphone != null) {
             microphone.stop();
         }
-        if (audioPlayer != null) {
-            audioPlayer.stop();
+        if (audioPlayerOpenAL != null) {
+            audioPlayerOpenAL.stop();
+        }
+        if (audioPlayerSteamAudio != null) {
+            audioPlayerSteamAudio.stop();
         }
         if (udpNetwork != null) {
             udpNetwork.stop();
@@ -261,6 +337,16 @@ public class ClientAudioEngine {
             reconnectionThread.interrupt();
             try {
                 reconnectionThread.join(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        // キープアライブスレッドを停止
+        if (keepaliveThread != null && keepaliveThread.isAlive()) {
+            keepaliveThread.interrupt();
+            try {
+                keepaliveThread.join(1000);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -325,12 +411,14 @@ public class ClientAudioEngine {
         // エンコーダー選択
         OpusCodec.Encoder encoder = (mode == VoiceMode.DEVICE) ? lowQualityEncoder : highQualityEncoder;
         if (encoder == null) {
+            LOGGER.warn("Encoder is null, cannot send voice packet (mode: {})", mode);
             return;
         }
 
         // エンコード
         byte[] encodedData = encoder.encode(samples);
         if (encodedData.length == 0) {
+            LOGGER.debug("Encoded data is empty, skipping packet");
             return;
         }
 
@@ -350,7 +438,52 @@ public class ClientAudioEngine {
         VoicePacket packet = builder.build();
 
         // 送信
+        LOGGER.debug("Sending voice packet: mode={}, volume={}, seq={}, dataSize={}",
+                mode, currentVolume, sequenceNumber - 1, encodedData.length);
         udpNetwork.sendToServer(packet);
+    }
+
+    /**
+     * HELLOパケットを送信（クライアント登録）
+     */
+    private void sendHelloPacket() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) {
+            return;
+        }
+
+        // 空のオーディオデータでHELLOパケットを送信
+        VoicePacket helloPacket = new VoicePacket.Builder()
+                .packetType(AudioConstants.PACKET_TYPE_HELLO)
+                .senderId(mc.player.getUUID())
+                .sequenceNumber((short) 0)
+                .mode(VoiceMode.SIMULATION)
+                .volumeLevel(VolumeLevel.NORMAL)
+                .audioData(new byte[0])  // 空のデータ
+                .build();
+
+        udpNetwork.sendToServer(helloPacket);
+        LOGGER.debug("Sent HELLO packet to register client with server");
+    }
+
+    /**
+     * キープアライブループ（定期的にHELLOパケットを送信してアドレスを維持）
+     */
+    private void keepaliveLoop() {
+        while (running.get()) {
+            try {
+                Thread.sleep(AudioConstants.KEEPALIVE_INTERVAL_MS);
+                sendHelloPacket();
+                LOGGER.debug("Sent keepalive packet");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception e) {
+                if (running.get()) {
+                    LOGGER.error("Error in keepalive loop", e);
+                }
+            }
+        }
     }
 
     /**
@@ -359,17 +492,20 @@ public class ClientAudioEngine {
     private void handleReceivedPacket(VoicePacket packet) {
         try {
             if (decoder == null) {
+                LOGGER.error("Decoder is null, cannot process received packet");
                 return;
             }
 
             // デコード
             short[] samples = decoder.decode(packet.getAudioData());
             if (samples.length == 0) {
+                LOGGER.warn("Decoded samples are empty");
                 return;
             }
 
             Minecraft mc = Minecraft.getInstance();
             if (mc.player == null) {
+                LOGGER.warn("Player is null, cannot process audio");
                 return;
             }
 
@@ -377,8 +513,13 @@ public class ClientAudioEngine {
             if (packet.getMode() == VoiceMode.DEVICE) {
                 // デバイスモード: 非ポジショナル再生
                 // ウォーキートーキー風の音質劣化を適用
+                LOGGER.debug("Playing device mode audio (non-positional)");
                 short[] filtered = DSPProcessor.applyWalkieTalkieFilter(samples);
-                audioPlayer.addNonPositionalAudio(filtered);
+                if (usingSteamAudio) {
+                    audioPlayerSteamAudio.addNonPositionalAudio(filtered);
+                } else {
+                    audioPlayerOpenAL.addNonPositionalAudio(filtered);
+                }
             } else if (packet.getMode() == VoiceMode.SIMULATION) {
                 // シミュレーションモード: 音響シミュレーション + ポジショナル再生
                 Vec3 sourcePos;
@@ -388,34 +529,41 @@ public class ClientAudioEngine {
                 } else {
                     // プレイヤーからの音声
                     // サーバーから同期された位置情報を使用
-                    sourcePos = getPlayerPosition(packet.getSenderId());
-                    if (sourcePos.equals(Vec3.ZERO)) {
+                    Vec3 playerPos = getPlayerPosition(packet.getSenderId());
+                    if (playerPos.equals(Vec3.ZERO)) {
                         // 位置情報がまだ同期されていない場合はスキップ
+                        LOGGER.debug("Player position not available yet, skipping packet");
                         return;
                     }
+                    // 口の高さにオフセット（足元 + 1.5ブロック）
+                    sourcePos = playerPos.add(0, 1.5, 0);
                 }
 
-                Vec3 listenerPos = mc.player.position();
-                float initialVolume = packet.getVolumeLevel().getAmplitude();
+                // OpenAL EFX / Steam Audioで音響シミュレーション
+                // 3Dオーディオ用の位置（足元位置）
+                Vec3 audioSourcePos = packet.isFromSpeaker()
+                    ? sourcePos
+                    : getPlayerPosition(packet.getSenderId());
 
-                // クライアントサイド音響シミュレーション実行
-                AcousticSimulationEngine.DSPParameters dspParams =
-                        acousticSimulation.simulate(sourcePos, listenerPos, initialVolume);
-
-                LOGGER.debug("Acoustic simulation: {}", dspParams);
-
-                // DSP処理を適用
-                short[] processed = DSPProcessor.applyDSP(samples, dspParams);
-
-                audioPlayer.addPositionalAudio(packet.getSenderId(), processed, sourcePos);
+                // 生のサンプルと音量レベルを渡す
+                if (usingSteamAudio) {
+                    audioPlayerSteamAudio.addPositionalAudio(packet.getSenderId(), samples, audioSourcePos, packet.getVolumeLevel());
+                } else {
+                    audioPlayerOpenAL.addPositionalAudio(packet.getSenderId(), samples, audioSourcePos, packet.getVolumeLevel());
+                }
             } else {
                 // バンドモード: DSP処理なしでポジショナル再生
+                LOGGER.debug("Playing band mode audio (positional)");
                 Vec3 position = mc.player.position(); // 仮
-                audioPlayer.addPositionalAudio(packet.getSenderId(), samples, position);
+                if (usingSteamAudio) {
+                    audioPlayerSteamAudio.addPositionalAudio(packet.getSenderId(), samples, position);
+                } else {
+                    audioPlayerOpenAL.addPositionalAudio(packet.getSenderId(), samples, position);
+                }
             }
 
         } catch (Exception e) {
-            LOGGER.error("Error handling received packet", e);
+            LOGGER.error("Error in handleReceivedPacket", e);
         }
     }
 
@@ -440,6 +588,11 @@ public class ClientAudioEngine {
     public void setVolumeLevel(VolumeLevel level) {
         this.currentVolume = level;
         LOGGER.info("Volume level changed to: {}", level.getDisplayName());
+        try {
+            jp.houlab.mochidsuki.advancedvc.client.ClientConfig cfg = jp.houlab.mochidsuki.advancedvc.client.ClientConfig.get();
+            cfg.volumeLevel = level.name();
+            cfg.save();
+        } catch (Exception ignored) {}
     }
 
     public void setWalkieTalkieFrequency(int frequency) {
@@ -483,7 +636,26 @@ public class ClientAudioEngine {
      * プレイヤー位置を取得（音響シミュレーション用）
      */
     private Vec3 getPlayerPosition(UUID playerId) {
-        return playerPositions.getOrDefault(playerId, Vec3.ZERO);
+        // まず、同期された位置情報をチェック
+        Vec3 syncedPos = playerPositions.get(playerId);
+        if (syncedPos != null && !syncedPos.equals(Vec3.ZERO)) {
+            return syncedPos;
+        }
+
+        // 同期されていない場合、クライアント側のプレイヤーリストから取得
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level != null) {
+            for (net.minecraft.world.entity.player.Player player : mc.level.players()) {
+                if (player.getUUID().equals(playerId)) {
+                    Vec3 playerPos = player.position();
+                    LOGGER.debug("Retrieved player position from client world: {} -> {}", playerId, playerPos);
+                    return playerPos;
+                }
+            }
+        }
+
+        LOGGER.warn("Could not find player position for UUID: {}", playerId);
+        return Vec3.ZERO;
     }
 
     // ===== UI Support Methods =====
@@ -523,6 +695,63 @@ public class ClientAudioEngine {
     }
 
     /**
+     * 現在稼働中のエンジンに対して、設定中の入出力デバイスを適用する。
+     * マイク/出力のラインを安全に張り替えるために、それぞれ個別に再初期化する。
+     */
+    public void applySelectedAudioDevicesFromConfig() {
+        try {
+            jp.houlab.mochidsuki.advancedvc.client.ClientConfig cfg = jp.houlab.mochidsuki.advancedvc.client.ClientConfig.get();
+
+            // マイクを差し替え
+            MicrophoneCapture oldMic = this.microphone;
+            MicrophoneCapture newMic = new MicrophoneCapture();
+            if (cfg.inputDevice != null && !cfg.inputDevice.isBlank()) {
+                newMic.setPreferredMixerName(cfg.inputDevice);
+            }
+            newMic.start();
+            newMic.setInputGain(cfg.inputVolume);
+            this.microphone = newMic;
+            if (oldMic != null) {
+                try { oldMic.stop(); } catch (Exception ignored) {}
+            }
+
+            // 出力プレイヤーを差し替え
+            // 既存のプレイヤーを停止
+            if (this.audioPlayerOpenAL != null) {
+                try { this.audioPlayerOpenAL.stop(); } catch (Exception ignored) {}
+            }
+            if (this.audioPlayerSteamAudio != null) {
+                try { this.audioPlayerSteamAudio.stop(); } catch (Exception ignored) {}
+            }
+
+            // 新しいプレイヤーを作成
+            if (cfg.useSteamAudio) {
+                this.audioPlayerSteamAudio = new AudioPlayerSteamAudio();
+                if (cfg.outputDevice != null && !cfg.outputDevice.isBlank()) {
+                    this.audioPlayerSteamAudio.setPreferredMixerName(cfg.outputDevice);
+                }
+                this.audioPlayerSteamAudio.start();
+                this.audioPlayerSteamAudio.setOutputGain(cfg.outputVolume);
+                this.audioPlayerOpenAL = null;
+                this.usingSteamAudio = true;
+            } else {
+                this.audioPlayerOpenAL = new AudioPlayerOpenAL();
+                if (cfg.outputDevice != null && !cfg.outputDevice.isBlank()) {
+                    this.audioPlayerOpenAL.setPreferredMixerName(cfg.outputDevice);
+                }
+                this.audioPlayerOpenAL.start();
+                this.audioPlayerOpenAL.setOutputGain(cfg.outputVolume);
+                this.audioPlayerSteamAudio = null;
+                this.usingSteamAudio = false;
+            }
+
+            LOGGER.info("Applied selected audio devices (mic/output) from client config");
+        } catch (Exception e) {
+            LOGGER.warn("Failed to apply selected audio devices from config", e);
+        }
+    }
+
+    /**
      * VAD閾値を更新
      */
     public void updateVadThreshold(double threshold) {
@@ -546,9 +775,12 @@ public class ClientAudioEngine {
      * 出力音量を更新
      */
     public void updateOutputVolume(double volume) {
-        if (audioPlayer != null) {
-            audioPlayer.setOutputGain(volume);
-            LOGGER.info("Output volume updated to: {}", volume);
+        if (audioPlayerOpenAL != null) {
+            audioPlayerOpenAL.setOutputGain(volume);
         }
+        if (audioPlayerSteamAudio != null) {
+            audioPlayerSteamAudio.setOutputGain(volume);
+        }
+        LOGGER.info("Output volume updated to: {}", volume);
     }
 }

@@ -2,7 +2,9 @@ package jp.houlab.mochidsuki.advancedvc.client.gui;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import jp.houlab.mochidsuki.advancedvc.client.VoiceStatus;
+import jp.houlab.mochidsuki.advancedvc.client.ClientConfig;
 import jp.houlab.mochidsuki.advancedvc.client.audio.ClientAudioEngine;
+import jp.houlab.mochidsuki.advancedvc.common.VolumeLevel;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
@@ -22,8 +24,8 @@ public class VoiceHudOverlay implements IGuiOverlay {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
 
-        // デバッグ: ConfigでVC機能が無効の場合は表示しない
-        if (!jp.houlab.mochidsuki.advancedvc.Config.enableVoiceChat) {
+        // クライアント設定でVC機能が無効の場合は表示しない
+        if (!ClientConfig.get().enableVoiceChat) {
             return;
         }
 
@@ -46,8 +48,14 @@ public class VoiceHudOverlay implements IGuiOverlay {
         int statusColor = status.getColor();
         guiGraphics.drawString(font, statusText, HUD_X, hudY, statusColor, true);
 
+        // 現在の声量レベルを表示
+        VolumeLevel volumeLevel = engine.getCurrentVolume();
+        String volumeText = "[" + volumeLevel.getDisplayName() + "]";
+        int volumeX = HUD_X + font.width(statusText) + 5;
+        guiGraphics.drawString(font, volumeText, volumeX, hudY, 0xFFFFFFFF, true);
+
         // 声量レベルバー表示
-        int barX = HUD_X + font.width(statusText) + 10;
+        int barX = volumeX + font.width(volumeText) + 5;
         int barY = hudY;
         int barWidth = 80;
         int barHeight = 8;

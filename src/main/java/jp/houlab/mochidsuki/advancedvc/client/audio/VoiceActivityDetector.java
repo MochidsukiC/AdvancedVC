@@ -86,10 +86,13 @@ public class VoiceActivityDetector {
     }
 
     /**
-     * 現在の声量レベルを取得（0.0～1.0）
+     * 現在の声量レベルを取得（0.0～1.0、視覚的表示用に増幅）
      */
     public float getCurrentLevel() {
-        return currentLevel;
+        // 通常の会話音声は正規化RMSで0.01-0.1程度なので、
+        // UI表示のために10倍に増幅（最大1.0でクリップ）
+        float amplified = currentLevel * 10.0f;
+        return Math.min(amplified, 1.0f);
     }
 
     /**

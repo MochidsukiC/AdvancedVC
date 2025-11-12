@@ -110,6 +110,12 @@ public class ServerAudioRouter {
      */
     private void handleReceivedPacket(VoicePacket packet) {
         try {
+            // HELLOパケット（登録専用）の場合はルーティングをスキップ
+            if (packet.getPacketType() == AudioConstants.PACKET_TYPE_HELLO) {
+                LOGGER.debug("Received HELLO packet from {}, address registered", packet.getSenderId());
+                return;
+            }
+
             // モードに応じてルーティング
             switch (packet.getMode()) {
                 case SIMULATION -> routeSimulationMode(packet);
@@ -123,16 +129,22 @@ public class ServerAudioRouter {
 
     /**
      * シミュレーションモードのルーティング
-     * 声量に基づく距離フィルタリングのみ実行
+     * 声量に基づく距離フィルタリング（maxDistanceの2倍まで送信し、音量はクライアント側で計算）
      */
     private void routeSimulationMode(VoicePacket packet) {
         ServerPlayer sender = server.getPlayerList().getPlayer(packet.getSenderId());
         if (sender == null) {
+            LOGGER.warn("Sender player not found for packet from UUID: {}", packet.getSenderId());
             return;
         }
 
         Vec3 senderPos = sender.position();
         float maxDistance = packet.getVolumeLevel().getMaxDistance();
+        // クライアント側で減衰計算するため、maxDistanceの2倍までパケットを送信
+        float broadcastRange = maxDistance * 2.0f;
+
+        LOGGER.debug("Routing simulation mode packet from {} at {} (maxDistance={}, broadcastRange={})",
+                sender.getName().getString(), senderPos, maxDistance, broadcastRange);
 
         // 範囲内のプレイヤーを取得
         List<String> nearbyPlayerIds = new ArrayList<>();
@@ -144,14 +156,23 @@ public class ServerAudioRouter {
             Vec3 playerPos = player.position();
             double distance = senderPos.distanceTo(playerPos);
 
-            if (distance <= maxDistance) {
+            LOGGER.debug("  Checking player {} at {} (distance={})",
+                    player.getName().getString(), playerPos, distance);
+
+            if (distance <= broadcastRange) {
                 nearbyPlayerIds.add(player.getUUID().toString());
+                LOGGER.debug("    -> Within broadcast range, will send");
+            } else {
+                LOGGER.debug("    -> Out of broadcast range");
             }
         }
 
         // クリーンな音声パケットをブロードキャスト
         if (!nearbyPlayerIds.isEmpty()) {
+            LOGGER.debug("Broadcasting voice packet to {} nearby players", nearbyPlayerIds.size());
             udpNetwork.broadcast(packet, nearbyPlayerIds);
+        } else {
+            LOGGER.debug("No nearby players to broadcast to");
         }
     }
 

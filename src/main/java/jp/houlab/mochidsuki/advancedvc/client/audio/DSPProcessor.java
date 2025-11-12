@@ -2,19 +2,26 @@ package jp.houlab.mochidsuki.advancedvc.client.audio;
 
 import jp.houlab.mochidsuki.advancedvc.common.AudioConstants;
 
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
  * DSP（Digital Signal Processing）プロセッサー
  * 音響シミュレーション結果を実際の音声データに適用
  */
 public class DSPProcessor {
+    // プレイヤーごとのDSPFilterインスタンス
+    private static final Map<UUID, DSPFilter> playerFilters = new ConcurrentHashMap<>();
 
     /**
-     * DSPパラメータを音声データに適用
+     * DSPパラメータを音声データに適用（Phase 2拡張版：周波数バンド対応）
+     * @param playerId プレイヤーID（フィルター状態管理用）
      * @param samples PCMサンプル
      * @param params DSPパラメータ
      * @return 処理後のPCMサンプル
      */
-    public static short[] applyDSP(short[] samples, AcousticSimulationEngine.DSPParameters params) {
+    public static short[] applyDSP(UUID playerId, short[] samples, AcousticSimulationEngine.DSPParameters params) {
         if (samples == null || samples.length == 0) {
             return samples;
         }
@@ -24,15 +31,66 @@ public class DSPProcessor {
         // 1. 音量調整
         applyVolumeAdjustment(processed, params.volume);
 
-        // 2. フィルター適用（簡易版）
-        applySimpleFilter(processed, params.lowPassFilter, params.highPassFilter);
+        // 2. 周波数バンド処理（Phase 2）
+        // TODO: FFT/IFFT処理が重すぎるため一時的に無効化、Butterworthフィルターのみ使用
+        if (params.bandAttenuations != null && params.bandAttenuations.length > 0) {
+            // バンド減衰の平均を計算して、全体の音量調整のみ適用
+            float averageAttenuation = 0f;
+            for (float att : params.bandAttenuations) {
+                averageAttenuation += att;
+            }
+            averageAttenuation /= params.bandAttenuations.length;
 
-        // 3. リバーブ（簡易版）
+            // 音量調整（バンド減衰の平均を反映）
+            for (int i = 0; i < processed.length; i++) {
+                int adjusted = (int) (processed[i] * averageAttenuation);
+                processed[i] = (short) Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, adjusted));
+            }
+        }
+
+        // IIR Butterworthフィルター適用（4次）
+        processed = applyButterworthFilter(playerId, processed, params.lowPassFilter, params.highPassFilter);
+
+        // 3. Multi-tap Delay Reverb（Phase 3）
         if (params.reverbAmount > 0.01f) {
-            applySimpleReverb(processed, params.reverbAmount, params.reverbDelay);
+            processed = ReverbProcessor.applyMultiTapReverb(processed, params.reverbAmount, params.reverbDelay);
         }
 
         return processed;
+    }
+
+    /**
+     * 4次IIR Butterworthフィルターを適用
+     */
+    private static short[] applyButterworthFilter(UUID playerId, short[] samples,
+                                                    float lowPassCutoff, float highPassCutoff) {
+        // プレイヤーのDSPFilterを取得（なければ作成）
+        DSPFilter filter = playerFilters.computeIfAbsent(playerId, id -> new DSPFilter());
+
+        // フィルターパラメータを設定
+        filter.setLowPass(lowPassCutoff);
+        filter.setHighPass(highPassCutoff);
+
+        // フィルター適用
+        return filter.process(samples);
+    }
+
+    /**
+     * プレイヤーのフィルター状態をクリア（プレイヤーが離脱した時など）
+     */
+    public static void clearPlayerFilter(UUID playerId) {
+        DSPFilter filter = playerFilters.remove(playerId);
+        if (filter != null) {
+            filter.reset();
+        }
+    }
+
+    /**
+     * 全プレイヤーのフィルター状態をクリア
+     */
+    public static void clearAllFilters() {
+        playerFilters.values().forEach(DSPFilter::reset);
+        playerFilters.clear();
     }
 
     /**
@@ -46,28 +104,6 @@ public class DSPProcessor {
         }
     }
 
-    /**
-     * 簡易フィルター適用
-     * TODO: より高度なIIR/FIRフィルター実装
-     */
-    private static void applySimpleFilter(short[] samples, float lowPassCutoff, float highPassCutoff) {
-        // ローパスフィルター（高周波減衰）の簡易実装
-        float lpfFactor = Math.min(lowPassCutoff / 20000f, 1.0f);
-
-        // ハイパスフィルター（低周波減衰）の簡易実装
-        float hpfFactor = Math.min((AudioConstants.SAMPLE_RATE / 2 - highPassCutoff) /
-                (AudioConstants.SAMPLE_RATE / 2f), 1.0f);
-
-        float combinedFactor = lpfFactor * hpfFactor;
-
-        // 移動平均フィルター（簡易ローパス）
-        if (combinedFactor < 0.9f) {
-            for (int i = 1; i < samples.length - 1; i++) {
-                int smoothed = (samples[i - 1] + samples[i] * 2 + samples[i + 1]) / 4;
-                samples[i] = (short) ((samples[i] * combinedFactor) + (smoothed * (1 - combinedFactor)));
-            }
-        }
-    }
 
     /**
      * 簡易リバーブ適用

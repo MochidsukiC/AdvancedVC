@@ -115,6 +115,7 @@ sourceSets.main.resources { srcDir 'src/generated/resources' }
 // Add run/libs to runtime classpath for development environment
 sourceSets {
     main {
+        // Explicitly add run/libs directory to classpath for development
         runtimeClasspath += files('run/libs')
     }
 }
@@ -122,12 +123,6 @@ sourceSets {
 repositories {
     // Put repositories for dependencies here
     // ForgeGradle automatically adds the Forge maven and Maven Central for you
-
-    // If you have mod jar dependencies in ./libs, you can declare them as a repository like so.
-    // See https://docs.gradle.org/current/userguide/declaring_repositories.html#sub:flat_dir_resolver
-    // flatDir {
-    //     dir 'libs'
-    // }
 }
 
 dependencies {
@@ -139,9 +134,13 @@ dependencies {
     minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
 
     // Audio processing libraries for Advanced VC
-    // Opus codec for audio encoding/decoding - packaged with jarJar for distribution
+    // Opus codec for audio encoding/decoding
     implementation 'io.github.jaredmdobson:concentus:1.0.2'
     jarJar(group: 'io.github.jaredmdobson', name: 'concentus', version: '[1.0.2,1.1)')
+
+    // JNA for native library bindings (Steam Audio integration)
+    implementation 'net.java.dev.jna:jna:5.14.0'
+    implementation 'net.java.dev.jna:jna-platform:5.14.0'
 
     // Netty for enhanced UDP networking (already included in Minecraft, but explicit for clarity)
     // compileOnly 'io.netty:netty-all:4.1.77.Final'
@@ -162,6 +161,7 @@ dependencies {
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
 
 }
+
 
 // This block of code expands all declared replace properties in the specified resource targets.
 // A missing property will result in an error. Properties are expanded using ${} Groovy notation.
@@ -191,8 +191,14 @@ tasks.named('jar', Jar).configure {
                 "Implementation-Title"    : project.name,
                 "Implementation-Version"  : project.jar.archiveVersion,
                 "Implementation-Vendor"   : mod_authors,
-                "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+                "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
+                "FMLModType"              : "GAMELIBRARY"
         ])
+    }
+
+    // Include Concentus library directly in the JAR
+    from {
+        configurations.runtimeClasspath.findAll { it.name.contains('concentus') }.collect { it.isDirectory() ? it : zipTree(it) }
     }
 
     // This is the preferred method to reobfuscate your jar file
@@ -209,20 +215,20 @@ task copyConcentus {
         def runLibsDir = file('run/libs')
         runLibsDir.mkdirs()
 
-        def concentusFile = configurations.runtimeClasspath.files.find { it.name.contains('concentus') }
-        if (concentusFile != null) {
+        def concentusFiles = configurations.runtimeClasspath.files.findAll { it.name.contains('concentus') }
+        if (!concentusFiles.isEmpty()) {
             copy {
-                from concentusFile
+                from concentusFiles
                 into runLibsDir
             }
-            println "Copied ${concentusFile.name} to run/libs for development environment"
+            println "Copied Concentus (${concentusFiles*.name}) to run/libs for development environment"
         } else {
             println "Warning: Concentus library not found in runtimeClasspath"
         }
     }
 }
 
-// Ensure concentus is copied before running the client (conditional)
+// Ensure concentus is copied before running the client
 afterEvaluate {
     tasks.findByName('prepareRuns')?.dependsOn 'copyConcentus'
 }

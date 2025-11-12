@@ -123,8 +123,10 @@ public class UDPNetworkManager {
             byte[] data = packet.serialize();
             DatagramPacket datagramPacket = new DatagramPacket(data, data.length, serverAddress, serverPort);
             socket.send(datagramPacket);
+            LOGGER.debug("Sent UDP packet to server {}:{} - {} bytes, packet type: {}",
+                    serverAddress.getHostAddress(), serverPort, data.length, packet.getPacketType());
         } catch (IOException e) {
-            LOGGER.error("Failed to send packet to server", e);
+            LOGGER.error("Failed to send packet to server {}:{}", serverAddress, serverPort, e);
         }
     }
 
@@ -152,17 +154,28 @@ public class UDPNetworkManager {
      */
     public void broadcast(VoicePacket packet, Iterable<String> playerIds) {
         byte[] data = packet.serialize();
+        int successCount = 0;
+        int failCount = 0;
+
         for (String playerId : playerIds) {
             SocketAddress clientAddress = clientAddresses.get(playerId);
             if (clientAddress != null) {
                 try {
                     DatagramPacket datagramPacket = new DatagramPacket(data, data.length, clientAddress);
                     socket.send(datagramPacket);
+                    successCount++;
+                    LOGGER.debug("Sent packet to client {} at {}", playerId, clientAddress);
                 } catch (IOException e) {
+                    failCount++;
                     LOGGER.error("Failed to broadcast packet to client {}", playerId, e);
                 }
+            } else {
+                failCount++;
+                LOGGER.debug("Client address not found for player {}", playerId);
             }
         }
+
+        LOGGER.debug("Broadcast complete: {} successful, {} failed", successCount, failCount);
     }
 
     /**
@@ -184,6 +197,7 @@ public class UDPNetworkManager {
      */
     private void receiveLoop() {
         byte[] buffer = new byte[AudioConstants.MAX_PACKET_SIZE];
+        LOGGER.info("UDP receive loop started, listening for packets...");
 
         while (running.get()) {
             try {
@@ -193,20 +207,31 @@ public class UDPNetworkManager {
                 // パケットをデシリアライズ
                 byte[] receivedData = new byte[datagramPacket.getLength()];
                 System.arraycopy(datagramPacket.getData(), 0, receivedData, 0, datagramPacket.getLength());
-                VoicePacket voicePacket = VoicePacket.deserialize(receivedData);
+
+                VoicePacket voicePacket;
+                try {
+                    voicePacket = VoicePacket.deserialize(receivedData);
+                } catch (Exception e) {
+                    LOGGER.error("Failed to deserialize packet: {} bytes from {}",
+                            datagramPacket.getLength(), datagramPacket.getSocketAddress(), e);
+                    continue;
+                }
 
                 // サーバー側: クライアントアドレスを自動登録
                 String senderId = voicePacket.getSenderId().toString();
-                clientAddresses.putIfAbsent(senderId, datagramPacket.getSocketAddress());
+                SocketAddress previousAddress = clientAddresses.putIfAbsent(senderId, datagramPacket.getSocketAddress());
+                if (previousAddress == null) {
+                    LOGGER.info("Registered new client address for {}: {}", senderId, datagramPacket.getSocketAddress());
+                }
 
                 // リスナーに通知
-                packetListeners.values().forEach(listener -> {
+                for (Consumer<VoicePacket> listener : packetListeners.values()) {
                     try {
                         listener.accept(voicePacket);
                     } catch (Exception e) {
                         LOGGER.error("Error in packet listener", e);
                     }
-                });
+                }
 
             } catch (IOException e) {
                 if (running.get()) {

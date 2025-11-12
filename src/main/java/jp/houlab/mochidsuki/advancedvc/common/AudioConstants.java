@@ -47,4 +47,8 @@ public class AudioConstants {
     public static final byte PACKET_TYPE_DEVICE = 0x02;
     public static final byte PACKET_TYPE_BAND = 0x03;
     public static final byte PACKET_TYPE_CONTROL = 0x10;
+    public static final byte PACKET_TYPE_HELLO = 0x11;         // クライアント登録パケット
+
+    // === キープアライブ設定 ===
+    public static final int KEEPALIVE_INTERVAL_MS = 5000;      // キープアライブ送信間隔（5秒）
 }

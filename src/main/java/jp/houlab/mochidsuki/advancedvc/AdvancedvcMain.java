@@ -5,6 +5,7 @@ import jp.houlab.mochidsuki.advancedvc.api.AcousticPropertiesLoader;
 import jp.houlab.mochidsuki.advancedvc.block.*;
 import jp.houlab.mochidsuki.advancedvc.block.entity.ModBlockEntities;
 import jp.houlab.mochidsuki.advancedvc.client.audio.ClientAudioEngine;
+import jp.houlab.mochidsuki.advancedvc.client.audio.steamaudio.SteamAudioInitTest;
 import jp.houlab.mochidsuki.advancedvc.client.gui.VoiceHudOverlay;
 import jp.houlab.mochidsuki.advancedvc.item.BandToolItem;
 import jp.houlab.mochidsuki.advancedvc.item.WalkieTalkieItem;
@@ -191,6 +192,17 @@ public class AdvancedvcMain {
         @SubscribeEvent
         public static void onClientSetup(FMLClientSetupEvent event) {
             LOGGER.info("Advanced VC: Client setup");
+
+            // Steam Audio初期化テスト（Phase 1）
+            event.enqueueWork(() -> {
+                LOGGER.info("Running Steam Audio initialization test...");
+                boolean success = SteamAudioInitTest.runDetailedInitTest();
+                if (success) {
+                    LOGGER.info("Steam Audio initialization test completed successfully!");
+                } else {
+                    LOGGER.warn("Steam Audio initialization test failed. Voice chat may not have 3D audio.");
+                }
+            });
         }
 
         @SubscribeEvent
@@ -211,12 +223,12 @@ public class AdvancedvcMain {
          */
         @SubscribeEvent
         public static void onClientPlayerLoggedIn(ClientPlayerNetworkEvent.LoggingIn event) {
-            if (!Config.enableVoiceChat) {
+            if (!jp.houlab.mochidsuki.advancedvc.client.ClientConfig.get().enableVoiceChat) {
                 LOGGER.info("Voice chat is disabled in config");
                 return;
             }
 
-            if (!Config.autoStart) {
+            if (!jp.houlab.mochidsuki.advancedvc.client.ClientConfig.get().autoStart) {
                 LOGGER.info("Auto-start is disabled, voice chat not started automatically");
                 return;
             }
@@ -230,8 +242,10 @@ public class AdvancedvcMain {
             // サーバーアドレスを判定
             if (mc.getCurrentServer() != null) {
                 // マルチプレイヤー接続
-                serverAddress = mc.getCurrentServer().ip;
-                LOGGER.info("Connecting to multiplayer server: {}", serverAddress);
+                String rawAddress = mc.getCurrentServer().ip;
+                // ポート番号を除去（例: "192.168.1.1:25565" -> "192.168.1.1"）
+                serverAddress = rawAddress.split(":")[0];
+                LOGGER.info("Connecting to multiplayer server: {} (raw: {})", serverAddress, rawAddress);
             } else if (mc.hasSingleplayerServer()) {
                 // 統合サーバー（シングルプレイまたはLANに公開）
                 serverAddress = "127.0.0.1";
@@ -241,6 +255,7 @@ public class AdvancedvcMain {
                 return;
             }
 
+            LOGGER.info("Starting audio engine with server address: {}, UDP port: {}", serverAddress, Config.udpPort);
             ClientAudioEngine.getInstance().start(serverAddress, Config.udpPort);
         }
 
