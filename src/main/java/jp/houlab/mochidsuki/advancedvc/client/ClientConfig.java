@@ -33,7 +33,23 @@ public class ClientConfig {
     public String outputDevice = "デフォルト";
     public String volumeLevel = "NORMAL"; // 声量レベル（WHISPER, QUIET, NORMAL, LOUD, SHOUT）
     public boolean visualizeRays = false; // レイ可視化（デバッグ表示）
-    public boolean useSteamAudio = true; // Steam Audio使用（Phase 1: バイノーラル再生）
+    // Steam Audio使用（Phase 1: バイノーラル再生）
+    // ARM64環境ではJNAのfloat**ポインタ処理に制限があるため、OpenAL EFXを使用
+    // x64環境ではSteam Audioで高品質なHRTFが利用可能
+    public boolean useSteamAudio = !isArmArchitecture();
+
+    /**
+     * システムアーキテクチャがARMかどうかを判定
+     * @return ARMアーキテクチャの場合true
+     */
+    private static boolean isArmArchitecture() {
+        String arch = System.getProperty("os.arch", "").toLowerCase();
+        boolean isArm = arch.contains("arm") || arch.contains("aarch");
+        if (isArm) {
+            LOGGER.info("Detected ARM architecture ({}), using OpenAL EFX instead of Steam Audio", arch);
+        }
+        return isArm;
+    }
 
     public static synchronized ClientConfig get() {
         if (INSTANCE == null) {

@@ -144,15 +144,31 @@ public interface SteamAudioLibrary extends Library {
     /**
      * オーディオバッファ（Deinterleaved形式）
      * dataはIPLfloat32** (チャンネルごとのfloat配列へのポインタの配列)
+     *
+     * ARM64環境での構造体レイアウト:
+     * - numChannels: 4バイト (offset 0)
+     * - numSamples: 4バイト (offset 4)
+     * - data: 8バイト (offset 8, パディングなし)
      */
+    @Structure.FieldOrder({"numChannels", "numSamples", "data"})
     class IPLAudioBuffer extends Structure {
         public int numChannels;     // Number of channels
         public int numSamples;      // Number of samples per channel
         public Pointer data;        // Array of channel pointers (float**)
 
+        public IPLAudioBuffer() {
+            super(Structure.ALIGN_DEFAULT);
+        }
+
+        public IPLAudioBuffer(Pointer p) {
+            super(p, Structure.ALIGN_DEFAULT);
+            read();
+        }
+
         @Override
-        protected java.util.List<String> getFieldOrder() {
-            return java.util.Arrays.asList("numChannels", "numSamples", "data");
+        public int size() {
+            // ARM64: int(4) + int(4) + Pointer(8) = 16バイト
+            return 16;
         }
     }
 
