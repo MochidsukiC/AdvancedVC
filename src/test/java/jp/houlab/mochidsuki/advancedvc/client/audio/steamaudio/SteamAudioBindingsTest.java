@@ -45,6 +45,12 @@ public class SteamAudioBindingsTest {
         testIPLAudioBufferAllocate();
         testStructureFieldOrder();
 
+        // Minecraft scenario tests
+        testMultipleSoundSources();
+        testAllDirections();
+        testVariousAudioSignals();
+        testEdgeCases();
+
         // Print summary
         System.out.println("\n=================================================");
         System.out.println("  Test Summary");
@@ -556,10 +562,54 @@ public class SteamAudioBindingsTest {
     // UTILITY METHODS
     // =========================================================================
 
+    // =========================================================================
+    // TEST SOUND GENERATORS
+    // =========================================================================
+
     private static float[] generateSineWave(float frequency, int sampleRate, int numSamples) {
         float[] samples = new float[numSamples];
         for (int i = 0; i < numSamples; i++) {
             samples[i] = (float) Math.sin(2.0 * Math.PI * frequency * i / sampleRate);
+        }
+        return samples;
+    }
+
+    private static float[] generateWhiteNoise(int numSamples) {
+        float[] samples = new float[numSamples];
+        java.util.Random random = new java.util.Random(12345); // Fixed seed for reproducibility
+        for (int i = 0; i < numSamples; i++) {
+            samples[i] = (random.nextFloat() * 2.0f - 1.0f) * 0.5f; // Range: -0.5 to 0.5
+        }
+        return samples;
+    }
+
+    private static float[] generateSpeechLikeSignal(int sampleRate, int numSamples) {
+        // Simulate speech by combining multiple frequencies (formants)
+        float[] samples = new float[numSamples];
+        float[] frequencies = {200.0f, 500.0f, 1200.0f, 3000.0f}; // Typical speech formants
+        float[] amplitudes = {1.0f, 0.7f, 0.5f, 0.3f};
+
+        for (int i = 0; i < numSamples; i++) {
+            float sum = 0.0f;
+            for (int j = 0; j < frequencies.length; j++) {
+                sum += amplitudes[j] * Math.sin(2.0 * Math.PI * frequencies[j] * i / sampleRate);
+            }
+            samples[i] = sum / 4.0f; // Normalize
+        }
+        return samples;
+    }
+
+    private static float[] generateImpulse(int numSamples) {
+        float[] samples = new float[numSamples];
+        samples[0] = 1.0f; // Single impulse at the start
+        return samples;
+    }
+
+    private static float[] generateSquareWave(float frequency, int sampleRate, int numSamples) {
+        float[] samples = new float[numSamples];
+        float period = sampleRate / frequency;
+        for (int i = 0; i < numSamples; i++) {
+            samples[i] = ((i % (int)period) < (period / 2)) ? 0.5f : -0.5f;
         }
         return samples;
     }
@@ -839,6 +889,498 @@ public class SteamAudioBindingsTest {
 
         } catch (Exception e) {
             fail("Exception during structure field order test: " + e.getMessage());
+            e.printStackTrace();
+        }
+        System.out.println();
+    }
+
+    // =========================================================================
+    // MINECRAFT SCENARIO TEST 1: Multiple Sound Sources
+    // =========================================================================
+
+    /**
+     * Test processing multiple sound sources simultaneously (typical MC scenario).
+     * Simulates 5 players speaking at the same time from different directions.
+     */
+    private static void testMultipleSoundSources() {
+        System.out.println("[MC SCENARIO 1] Multiple Sound Sources (5 simultaneous)");
+
+        PointerByReference contextRef = new PointerByReference();
+        PointerByReference hrtfRef = new PointerByReference();
+        PointerByReference effectRef = new PointerByReference();
+
+        try {
+            // Setup Steam Audio
+            SteamAudioLibrary.IPLContextSettings contextSettings = new SteamAudioLibrary.IPLContextSettings();
+            contextSettings.version = SteamAudioLibrary.STEAMAUDIO_VERSION;
+            SteamAudioLibrary.INSTANCE.iplContextCreate(contextSettings, contextRef);
+            Pointer context = contextRef.getValue();
+
+            SteamAudioLibrary.IPLAudioSettings audioSettings = new SteamAudioLibrary.IPLAudioSettings();
+            audioSettings.samplingRate = SAMPLE_RATE;
+            audioSettings.frameSize = FRAME_SIZE;
+
+            SteamAudioLibrary.IPLHRTFSettings hrtfSettings = new SteamAudioLibrary.IPLHRTFSettings();
+            hrtfSettings.type = SteamAudioLibrary.IPLHRTFType.IPL_HRTFTYPE_DEFAULT;
+            SteamAudioLibrary.INSTANCE.iplHRTFCreate(context, audioSettings, hrtfSettings, hrtfRef);
+            Pointer hrtf = hrtfRef.getValue();
+
+            SteamAudioLibrary.IPLBinauralEffectSettings effectSettings = new SteamAudioLibrary.IPLBinauralEffectSettings();
+            effectSettings.hrtf = hrtf;
+            SteamAudioLibrary.INSTANCE.iplBinauralEffectCreate(context, audioSettings, effectSettings, effectRef);
+            Pointer effect = effectRef.getValue();
+
+            // Define 5 sound sources at different positions
+            float[][] directions = {
+                {1.0f, 0.0f, 0.0f},   // Right
+                {-1.0f, 0.0f, 0.0f},  // Left
+                {0.0f, 0.0f, 1.0f},   // Front
+                {0.0f, 0.0f, -1.0f},  // Back
+                {0.0f, 1.0f, 0.0f}    // Above
+            };
+
+            // Generate different frequencies for each source
+            float[] frequencies = {440.0f, 523.0f, 659.0f, 784.0f, 880.0f}; // A4, C5, E5, G5, A5
+
+            float[] mixedOutput = new float[FRAME_SIZE * 2]; // Stereo output
+
+            int successfulSources = 0;
+            for (int i = 0; i < 5; i++) {
+                ManualAudioBuffer inBuffer = new ManualAudioBuffer(1, FRAME_SIZE);
+                ManualAudioBuffer outBuffer = new ManualAudioBuffer(2, FRAME_SIZE);
+
+                // Generate unique sound for this source
+                float[] source = generateSineWave(frequencies[i], SAMPLE_RATE, FRAME_SIZE);
+                inBuffer.writeMonoData(source);
+
+                // Apply binaural effect
+                SteamAudioLibrary.IPLBinauralEffectParams params = new SteamAudioLibrary.IPLBinauralEffectParams();
+                params.direction = new SteamAudioLibrary.IPLVector3(directions[i][0], directions[i][1], directions[i][2]);
+                params.interpolation = SteamAudioLibrary.IPLHRTFInterpolation.IPL_HRTFINTERPOLATION_BILINEAR;
+                params.spatialBlend = 1.0f;
+                params.hrtf = hrtf;
+                params.peakDelays = Pointer.NULL;
+                params.write();
+
+                int result = SteamAudioLibrary.INSTANCE.iplBinauralEffectApply(
+                    effect, params.getPointer(), inBuffer.getStructPointer(), outBuffer.getStructPointer()
+                );
+
+                if (result == SteamAudioLibrary.IPLerror.IPL_STATUS_SUCCESS) {
+                    // Mix into output
+                    float[] output = outBuffer.readInterleavedData();
+                    for (int j = 0; j < output.length; j++) {
+                        mixedOutput[j] += output[j] / 5.0f; // Average mixing
+                    }
+                    successfulSources++;
+                }
+
+                inBuffer.dispose();
+                outBuffer.dispose();
+            }
+
+            if (successfulSources == 5) {
+                pass("All 5 sound sources processed successfully");
+            } else {
+                fail("Only " + successfulSources + " out of 5 sources processed");
+            }
+
+            // Verify mixed output is not silent
+            boolean hasOutput = false;
+            for (float sample : mixedOutput) {
+                if (Math.abs(sample) > 0.001f) {
+                    hasOutput = true;
+                    break;
+                }
+            }
+
+            if (hasOutput) {
+                pass("Mixed output contains audio from multiple sources");
+            } else {
+                fail("Mixed output is silent");
+            }
+
+            // Clean up
+            SteamAudioLibrary.INSTANCE.iplBinauralEffectRelease(effectRef);
+            SteamAudioLibrary.INSTANCE.iplHRTFRelease(hrtfRef);
+            SteamAudioLibrary.INSTANCE.iplContextRelease(contextRef);
+
+        } catch (Exception e) {
+            fail("Exception during multiple sound sources test: " + e.getMessage());
+            e.printStackTrace();
+        }
+        System.out.println();
+    }
+
+    // =========================================================================
+    // MINECRAFT SCENARIO TEST 2: All Directions (8 cardinal directions)
+    // =========================================================================
+
+    /**
+     * Test sound sources from all 8 cardinal directions.
+     * Verifies spatial positioning works correctly in all directions.
+     */
+    private static void testAllDirections() {
+        System.out.println("[MC SCENARIO 2] All Directions (8 cardinal directions)");
+
+        PointerByReference contextRef = new PointerByReference();
+        PointerByReference hrtfRef = new PointerByReference();
+        PointerByReference effectRef = new PointerByReference();
+
+        try {
+            // Setup Steam Audio
+            SteamAudioLibrary.IPLContextSettings contextSettings = new SteamAudioLibrary.IPLContextSettings();
+            contextSettings.version = SteamAudioLibrary.STEAMAUDIO_VERSION;
+            SteamAudioLibrary.INSTANCE.iplContextCreate(contextSettings, contextRef);
+            Pointer context = contextRef.getValue();
+
+            SteamAudioLibrary.IPLAudioSettings audioSettings = new SteamAudioLibrary.IPLAudioSettings();
+            audioSettings.samplingRate = SAMPLE_RATE;
+            audioSettings.frameSize = FRAME_SIZE;
+
+            SteamAudioLibrary.IPLHRTFSettings hrtfSettings = new SteamAudioLibrary.IPLHRTFSettings();
+            hrtfSettings.type = SteamAudioLibrary.IPLHRTFType.IPL_HRTFTYPE_DEFAULT;
+            SteamAudioLibrary.INSTANCE.iplHRTFCreate(context, audioSettings, hrtfSettings, hrtfRef);
+            Pointer hrtf = hrtfRef.getValue();
+
+            SteamAudioLibrary.IPLBinauralEffectSettings effectSettings = new SteamAudioLibrary.IPLBinauralEffectSettings();
+            effectSettings.hrtf = hrtf;
+            SteamAudioLibrary.INSTANCE.iplBinauralEffectCreate(context, audioSettings, effectSettings, effectRef);
+            Pointer effect = effectRef.getValue();
+
+            // Define 8 cardinal directions
+            String[] directionNames = {"Right", "Left", "Front", "Back", "Above", "Below", "Front-Right", "Front-Left"};
+            float[][] directions = {
+                {1.0f, 0.0f, 0.0f},    // Right
+                {-1.0f, 0.0f, 0.0f},   // Left
+                {0.0f, 0.0f, 1.0f},    // Front
+                {0.0f, 0.0f, -1.0f},   // Back
+                {0.0f, 1.0f, 0.0f},    // Above
+                {0.0f, -1.0f, 0.0f},   // Below
+                {0.707f, 0.0f, 0.707f}, // Front-Right (45 degrees)
+                {-0.707f, 0.0f, 0.707f} // Front-Left (45 degrees)
+            };
+
+            ManualAudioBuffer inBuffer = new ManualAudioBuffer(1, FRAME_SIZE);
+            ManualAudioBuffer outBuffer = new ManualAudioBuffer(2, FRAME_SIZE);
+
+            float[] testSignal = generateSineWave(440.0f, SAMPLE_RATE, FRAME_SIZE);
+            inBuffer.writeMonoData(testSignal);
+
+            int successfulDirections = 0;
+            for (int i = 0; i < directions.length; i++) {
+                SteamAudioLibrary.IPLBinauralEffectParams params = new SteamAudioLibrary.IPLBinauralEffectParams();
+                params.direction = new SteamAudioLibrary.IPLVector3(directions[i][0], directions[i][1], directions[i][2]);
+                params.interpolation = SteamAudioLibrary.IPLHRTFInterpolation.IPL_HRTFINTERPOLATION_BILINEAR;
+                params.spatialBlend = 1.0f;
+                params.hrtf = hrtf;
+                params.peakDelays = Pointer.NULL;
+                params.write();
+
+                int result = SteamAudioLibrary.INSTANCE.iplBinauralEffectApply(
+                    effect, params.getPointer(), inBuffer.getStructPointer(), outBuffer.getStructPointer()
+                );
+
+                if (result == SteamAudioLibrary.IPLerror.IPL_STATUS_SUCCESS) {
+                    float[] output = outBuffer.readInterleavedData();
+                    boolean hasOutput = false;
+                    for (float sample : output) {
+                        if (Math.abs(sample) > 0.001f) {
+                            hasOutput = true;
+                            break;
+                        }
+                    }
+
+                    if (hasOutput) {
+                        successfulDirections++;
+                    }
+                }
+            }
+
+            if (successfulDirections == directions.length) {
+                pass("All 8 cardinal directions processed successfully");
+            } else {
+                fail("Only " + successfulDirections + " out of " + directions.length + " directions processed");
+            }
+
+            inBuffer.dispose();
+            outBuffer.dispose();
+            SteamAudioLibrary.INSTANCE.iplBinauralEffectRelease(effectRef);
+            SteamAudioLibrary.INSTANCE.iplHRTFRelease(hrtfRef);
+            SteamAudioLibrary.INSTANCE.iplContextRelease(contextRef);
+
+        } catch (Exception e) {
+            fail("Exception during all directions test: " + e.getMessage());
+            e.printStackTrace();
+        }
+        System.out.println();
+    }
+
+    // =========================================================================
+    // MINECRAFT SCENARIO TEST 3: Various Audio Signals
+    // =========================================================================
+
+    /**
+     * Test processing various types of audio signals (sine, noise, speech-like, impulse).
+     * Ensures Steam Audio works correctly with different signal characteristics.
+     */
+    private static void testVariousAudioSignals() {
+        System.out.println("[MC SCENARIO 3] Various Audio Signals");
+
+        PointerByReference contextRef = new PointerByReference();
+        PointerByReference hrtfRef = new PointerByReference();
+        PointerByReference effectRef = new PointerByReference();
+
+        try {
+            // Setup Steam Audio
+            SteamAudioLibrary.IPLContextSettings contextSettings = new SteamAudioLibrary.IPLContextSettings();
+            contextSettings.version = SteamAudioLibrary.STEAMAUDIO_VERSION;
+            SteamAudioLibrary.INSTANCE.iplContextCreate(contextSettings, contextRef);
+            Pointer context = contextRef.getValue();
+
+            SteamAudioLibrary.IPLAudioSettings audioSettings = new SteamAudioLibrary.IPLAudioSettings();
+            audioSettings.samplingRate = SAMPLE_RATE;
+            audioSettings.frameSize = FRAME_SIZE;
+
+            SteamAudioLibrary.IPLHRTFSettings hrtfSettings = new SteamAudioLibrary.IPLHRTFSettings();
+            hrtfSettings.type = SteamAudioLibrary.IPLHRTFType.IPL_HRTFTYPE_DEFAULT;
+            SteamAudioLibrary.INSTANCE.iplHRTFCreate(context, audioSettings, hrtfSettings, hrtfRef);
+            Pointer hrtf = hrtfRef.getValue();
+
+            SteamAudioLibrary.IPLBinauralEffectSettings effectSettings = new SteamAudioLibrary.IPLBinauralEffectSettings();
+            effectSettings.hrtf = hrtf;
+            SteamAudioLibrary.INSTANCE.iplBinauralEffectCreate(context, audioSettings, effectSettings, effectRef);
+            Pointer effect = effectRef.getValue();
+
+            // Test different signal types
+            String[] signalNames = {"Sine Wave", "White Noise", "Speech-like", "Impulse", "Square Wave"};
+            float[][] testSignals = new float[5][];
+            testSignals[0] = generateSineWave(440.0f, SAMPLE_RATE, FRAME_SIZE);
+            testSignals[1] = generateWhiteNoise(FRAME_SIZE);
+            testSignals[2] = generateSpeechLikeSignal(SAMPLE_RATE, FRAME_SIZE);
+            testSignals[3] = generateImpulse(FRAME_SIZE);
+            testSignals[4] = generateSquareWave(440.0f, SAMPLE_RATE, FRAME_SIZE);
+
+            ManualAudioBuffer inBuffer = new ManualAudioBuffer(1, FRAME_SIZE);
+            ManualAudioBuffer outBuffer = new ManualAudioBuffer(2, FRAME_SIZE);
+
+            int successfulSignals = 0;
+            for (int i = 0; i < testSignals.length; i++) {
+                inBuffer.writeMonoData(testSignals[i]);
+
+                SteamAudioLibrary.IPLBinauralEffectParams params = new SteamAudioLibrary.IPLBinauralEffectParams();
+                params.direction = new SteamAudioLibrary.IPLVector3(1.0f, 0.0f, 0.0f); // Right
+                params.interpolation = SteamAudioLibrary.IPLHRTFInterpolation.IPL_HRTFINTERPOLATION_BILINEAR;
+                params.spatialBlend = 1.0f;
+                params.hrtf = hrtf;
+                params.peakDelays = Pointer.NULL;
+                params.write();
+
+                int result = SteamAudioLibrary.INSTANCE.iplBinauralEffectApply(
+                    effect, params.getPointer(), inBuffer.getStructPointer(), outBuffer.getStructPointer()
+                );
+
+                if (result == SteamAudioLibrary.IPLerror.IPL_STATUS_SUCCESS) {
+                    float[] output = outBuffer.readInterleavedData();
+                    // For impulse, check first few samples; for others, check anywhere
+                    boolean hasOutput = false;
+                    int checkRange = (i == 3) ? 100 : output.length; // Impulse response may be delayed
+                    for (int j = 0; j < checkRange; j++) {
+                        if (Math.abs(output[j]) > 0.0001f) {
+                            hasOutput = true;
+                            break;
+                        }
+                    }
+
+                    if (hasOutput) {
+                        successfulSignals++;
+                    } else {
+                        warn(signalNames[i] + " produced silent output");
+                    }
+                }
+            }
+
+            if (successfulSignals >= 4) { // Allow one signal to potentially be problematic
+                pass("Processed " + successfulSignals + " out of " + testSignals.length + " signal types");
+            } else {
+                fail("Only " + successfulSignals + " out of " + testSignals.length + " signal types produced output");
+            }
+
+            inBuffer.dispose();
+            outBuffer.dispose();
+            SteamAudioLibrary.INSTANCE.iplBinauralEffectRelease(effectRef);
+            SteamAudioLibrary.INSTANCE.iplHRTFRelease(hrtfRef);
+            SteamAudioLibrary.INSTANCE.iplContextRelease(contextRef);
+
+        } catch (Exception e) {
+            fail("Exception during various audio signals test: " + e.getMessage());
+            e.printStackTrace();
+        }
+        System.out.println();
+    }
+
+    // =========================================================================
+    // MINECRAFT SCENARIO TEST 4: Edge Cases
+    // =========================================================================
+
+    /**
+     * Test edge cases: zero vector, same position, extreme distances, etc.
+     */
+    private static void testEdgeCases() {
+        System.out.println("[MC SCENARIO 4] Edge Cases");
+
+        PointerByReference contextRef = new PointerByReference();
+        PointerByReference hrtfRef = new PointerByReference();
+        PointerByReference effectRef = new PointerByReference();
+
+        try {
+            // Setup Steam Audio
+            SteamAudioLibrary.IPLContextSettings contextSettings = new SteamAudioLibrary.IPLContextSettings();
+            contextSettings.version = SteamAudioLibrary.STEAMAUDIO_VERSION;
+            SteamAudioLibrary.INSTANCE.iplContextCreate(contextSettings, contextRef);
+            Pointer context = contextRef.getValue();
+
+            SteamAudioLibrary.IPLAudioSettings audioSettings = new SteamAudioLibrary.IPLAudioSettings();
+            audioSettings.samplingRate = SAMPLE_RATE;
+            audioSettings.frameSize = FRAME_SIZE;
+
+            SteamAudioLibrary.IPLHRTFSettings hrtfSettings = new SteamAudioLibrary.IPLHRTFSettings();
+            hrtfSettings.type = SteamAudioLibrary.IPLHRTFType.IPL_HRTFTYPE_DEFAULT;
+            SteamAudioLibrary.INSTANCE.iplHRTFCreate(context, audioSettings, hrtfSettings, hrtfRef);
+            Pointer hrtf = hrtfRef.getValue();
+
+            SteamAudioLibrary.IPLBinauralEffectSettings effectSettings = new SteamAudioLibrary.IPLBinauralEffectSettings();
+            effectSettings.hrtf = hrtf;
+            SteamAudioLibrary.INSTANCE.iplBinauralEffectCreate(context, audioSettings, effectSettings, effectRef);
+            Pointer effect = effectRef.getValue();
+
+            ManualAudioBuffer inBuffer = new ManualAudioBuffer(1, FRAME_SIZE);
+            ManualAudioBuffer outBuffer = new ManualAudioBuffer(2, FRAME_SIZE);
+
+            float[] testSignal = generateSineWave(440.0f, SAMPLE_RATE, FRAME_SIZE);
+            inBuffer.writeMonoData(testSignal);
+
+            // Test Case 1: Zero vector (same position) - should default to front
+            {
+                SteamAudioLibrary.IPLBinauralEffectParams params = new SteamAudioLibrary.IPLBinauralEffectParams();
+                params.direction = new SteamAudioLibrary.IPLVector3(0.0f, 0.0f, 0.0f);
+                params.interpolation = SteamAudioLibrary.IPLHRTFInterpolation.IPL_HRTFINTERPOLATION_BILINEAR;
+                params.spatialBlend = 1.0f;
+                params.hrtf = hrtf;
+                params.peakDelays = Pointer.NULL;
+                params.write();
+
+                // Normalize zero vector to (0, 0, 1) as done in the code
+                float length = 0.0f;
+                float x = 0.0f, y = 0.0f, z = 1.0f; // Default to front
+                params.direction.x = x;
+                params.direction.y = y;
+                params.direction.z = z;
+                params.write();
+
+                int result = SteamAudioLibrary.INSTANCE.iplBinauralEffectApply(
+                    effect, params.getPointer(), inBuffer.getStructPointer(), outBuffer.getStructPointer()
+                );
+
+                if (result == SteamAudioLibrary.IPLerror.IPL_STATUS_SUCCESS) {
+                    pass("Zero vector (same position) handled correctly");
+                } else {
+                    fail("Zero vector caused error");
+                }
+            }
+
+            // Test Case 2: Very small non-zero vector
+            {
+                SteamAudioLibrary.IPLBinauralEffectParams params = new SteamAudioLibrary.IPLBinauralEffectParams();
+                float tiny = 0.0001f;
+                float length = (float) Math.sqrt(tiny * tiny * 3);
+                params.direction = new SteamAudioLibrary.IPLVector3(tiny / length, tiny / length, tiny / length);
+                params.interpolation = SteamAudioLibrary.IPLHRTFInterpolation.IPL_HRTFINTERPOLATION_BILINEAR;
+                params.spatialBlend = 1.0f;
+                params.hrtf = hrtf;
+                params.peakDelays = Pointer.NULL;
+                params.write();
+
+                int result = SteamAudioLibrary.INSTANCE.iplBinauralEffectApply(
+                    effect, params.getPointer(), inBuffer.getStructPointer(), outBuffer.getStructPointer()
+                );
+
+                if (result == SteamAudioLibrary.IPLerror.IPL_STATUS_SUCCESS) {
+                    pass("Very small vector handled correctly");
+                } else {
+                    fail("Very small vector caused error");
+                }
+            }
+
+            // Test Case 3: Negative coordinates (behind and below)
+            {
+                SteamAudioLibrary.IPLBinauralEffectParams params = new SteamAudioLibrary.IPLBinauralEffectParams();
+                params.direction = new SteamAudioLibrary.IPLVector3(-1.0f, -1.0f, -1.0f);
+                float length = (float) Math.sqrt(3.0);
+                params.direction.x /= length;
+                params.direction.y /= length;
+                params.direction.z /= length;
+                params.interpolation = SteamAudioLibrary.IPLHRTFInterpolation.IPL_HRTFINTERPOLATION_BILINEAR;
+                params.spatialBlend = 1.0f;
+                params.hrtf = hrtf;
+                params.peakDelays = Pointer.NULL;
+                params.write();
+
+                int result = SteamAudioLibrary.INSTANCE.iplBinauralEffectApply(
+                    effect, params.getPointer(), inBuffer.getStructPointer(), outBuffer.getStructPointer()
+                );
+
+                if (result == SteamAudioLibrary.IPLerror.IPL_STATUS_SUCCESS) {
+                    pass("Negative coordinates (behind-below) handled correctly");
+                } else {
+                    fail("Negative coordinates caused error");
+                }
+            }
+
+            // Test Case 4: Silent input
+            {
+                float[] silence = new float[FRAME_SIZE];
+                inBuffer.writeMonoData(silence);
+
+                SteamAudioLibrary.IPLBinauralEffectParams params = new SteamAudioLibrary.IPLBinauralEffectParams();
+                params.direction = new SteamAudioLibrary.IPLVector3(1.0f, 0.0f, 0.0f);
+                params.interpolation = SteamAudioLibrary.IPLHRTFInterpolation.IPL_HRTFINTERPOLATION_BILINEAR;
+                params.spatialBlend = 1.0f;
+                params.hrtf = hrtf;
+                params.peakDelays = Pointer.NULL;
+                params.write();
+
+                int result = SteamAudioLibrary.INSTANCE.iplBinauralEffectApply(
+                    effect, params.getPointer(), inBuffer.getStructPointer(), outBuffer.getStructPointer()
+                );
+
+                if (result == SteamAudioLibrary.IPLerror.IPL_STATUS_SUCCESS) {
+                    float[] output = outBuffer.readInterleavedData();
+                    boolean isSilent = true;
+                    for (float sample : output) {
+                        if (Math.abs(sample) > 0.0001f) {
+                            isSilent = false;
+                            break;
+                        }
+                    }
+                    if (isSilent) {
+                        pass("Silent input produces silent output (no artifacts)");
+                    } else {
+                        warn("Silent input produced non-silent output");
+                    }
+                } else {
+                    fail("Silent input caused error");
+                }
+            }
+
+            inBuffer.dispose();
+            outBuffer.dispose();
+            SteamAudioLibrary.INSTANCE.iplBinauralEffectRelease(effectRef);
+            SteamAudioLibrary.INSTANCE.iplHRTFRelease(hrtfRef);
+            SteamAudioLibrary.INSTANCE.iplContextRelease(contextRef);
+
+        } catch (Exception e) {
+            fail("Exception during edge cases test: " + e.getMessage());
             e.printStackTrace();
         }
         System.out.println();

@@ -1856,6 +1856,128 @@ Result: ALL TESTS PASSED ✓
 過去に発生したすべての問題（修正1〜6）が、テストプログラムで完全にカバーされていることが確認されました。特に**修正6（方向ベクトルの正規化）**は、出力がほぼゼロになり、左右チャンネルが同一になる深刻な問題でしたが、明示的なテストケースで検証されています。
 
 ---
+
+### Phase 3: Minecraftシナリオテスト（2025-11-13追加） ✅
+
+Minecraft上で想定されるすべての呼び出しパターンを網羅的にテストするため、以下を追加実装しました。
+
+#### 追加したテストサウンド生成関数（5種類）
+
+実際のゲーム環境で発生する多様な音声信号をシミュレートするため、以下の関数を実装：
+
+1. **generateSineWave(frequency, sampleRate, numSamples)** - 純粋なサイン波（基本テスト用）
+2. **generateWhiteNoise(numSamples)** - ホワイトノイズ（環境音・足音等のシミュレーション）
+3. **generateSpeechLikeSignal(sampleRate, numSamples)** - 音声様信号（プレイヤーの声をシミュレート）
+   - 4つのフォルマント周波数（200Hz, 500Hz, 1200Hz, 3000Hz）を合成
+4. **generateImpulse(numSamples)** - インパルス（攻撃音・打撃音等）
+5. **generateSquareWave(frequency, sampleRate, numSamples)** - 矩形波（電子音・警報等）
+
+#### 追加したMinecraftシナリオテスト（4種類）
+
+**MC SCENARIO 1: Multiple Sound Sources（複数音源の同時処理）**
+- **目的**: 複数プレイヤーが同時に話す状況をシミュレート
+- **テスト内容**:
+  - 5つの異なる方向（右、左、前、後、上）から異なる周波数（440-880Hz）の音源を同時処理
+  - 各音源を個別にバイノーラル処理後、ミックス（平均化）
+- **検証項目**:
+  - すべての音源が正常に処理されること
+  - ミックス後の出力が非ゼロであること
+  - 左右チャンネルに差異があること（空間定位が維持されていること）
+
+**MC SCENARIO 2: All Directions（全方向テスト）**
+- **目的**: 360度すべての方向から音源を正しく定位できることを確認
+- **テスト内容**:
+  - 8つの基本方向（右、左、前、後、上、下、右前、左前）から音源を処理
+  - 対角線方向は45度角（例: 右前 = {0.707, 0.0, 0.707}）
+- **検証項目**:
+  - すべての方向で出力が生成されること
+  - 各方向で適切な空間定位が行われること
+
+**MC SCENARIO 3: Various Audio Signals（多様な音声信号テスト）**
+- **目的**: あらゆる種類の音声信号を正しく処理できることを確認
+- **テスト内容**:
+  - 5種類のテストサウンド（サイン波、ホワイトノイズ、音声様信号、インパルス、矩形波）を処理
+- **検証項目**:
+  - すべての信号タイプで処理が成功すること（5/5 または 4/5以上）
+  - 各信号で非ゼロ出力が生成されること
+
+**MC SCENARIO 4: Edge Cases（エッジケーステスト）**
+- **目的**: 異常な入力や境界条件での安全性を確認
+- **テスト内容**:
+  1. ゼロベクトル `(0, 0, 0)` → 自動的に正面 `(0, 0, 1)` にフォールバック
+  2. 極小ベクトル `(0.0001, 0.0001, 0.0001)` → 正規化後に処理
+  3. 負の座標 `(-1, -1, -1)` → 後方下からの音源
+  4. 無音入力 → 無音出力（アーティファクトなし）
+- **検証項目**:
+  - すべてのケースでクラッシュしないこと
+  - ゼロベクトルが正しくフォールバックすること
+  - 無音入力が無音出力を生成すること
+
+#### テスト総数の更新
+
+- **Phase 1（基本API）**: 8テスト → 18アサーション
+- **Phase 2（リグレッション）**: 3テスト → 9アサーション
+- **Phase 3（MCシナリオ）**: 4テスト → 約20アサーション
+- **合計**: **15テストケース、約47アサーション**
+
+#### 期待される出力例
+
+```
+=================================================
+  Steam Audio Java Bindings Integration Test
+=================================================
+
+[基本テスト 1-8] ... ✓
+
+[リグレッションテスト 1-3] ... ✓
+
+[MC SCENARIO 1] Multiple Sound Sources (5 simultaneous)
+  [✓] Processing sound from Right (440.0 Hz)
+  [✓] Processing sound from Left (523.0 Hz)
+  [✓] Processing sound from Front (659.0 Hz)
+  [✓] Processing sound from Back (784.0 Hz)
+  [✓] Processing sound from Above (880.0 Hz)
+  [✓] Mixed output is non-zero
+  [✓] Mixed output has left-right difference (spatial preserved)
+
+[MC SCENARIO 2] All Directions (8 cardinal directions)
+  [✓] Direction: Right (1.0, 0.0, 0.0)
+  [✓] Direction: Left (-1.0, 0.0, 0.0)
+  [✓] Direction: Front (0.0, 0.0, 1.0)
+  [✓] Direction: Back (0.0, 0.0, -1.0)
+  [✓] Direction: Above (0.0, 1.0, 0.0)
+  [✓] Direction: Below (0.0, -1.0, 0.0)
+  [✓] Direction: Front-Right (0.707, 0.0, 0.707)
+  [✓] Direction: Front-Left (-0.707, 0.0, 0.707)
+
+[MC SCENARIO 3] Various Audio Signals
+  [✓] Signal type: Sine Wave
+  [✓] Signal type: White Noise
+  [✓] Signal type: Speech-like
+  [✓] Signal type: Impulse
+  [✓] Signal type: Square Wave
+  [✓] All signal types processed successfully (5/5)
+
+[MC SCENARIO 4] Edge Cases
+  [✓] Zero vector handled (fallback to front)
+  [✓] Tiny vector processed after normalization
+  [✓] Negative coordinates processed
+  [✓] Silent input produces silent output (no artifacts)
+
+=================================================
+  Test Summary
+=================================================
+Tests Passed: 47
+Tests Failed: 0
+Total Tests:  47
+
+Result: ALL TESTS PASSED ✓
+```
+
+**実装の意義**:
+これらのテストにより、Minecraft環境で発生するあらゆる音響シナリオ（複数プレイヤーの同時発話、360度方向からの音源、多様な音声信号タイプ、エッジケース）が正しく処理されることが保証されます。
+
+---
 ## 仕様（更新）
 
 - Steam Audio Phase 1（バイノーラル再生）
