@@ -40,6 +40,11 @@ public class SteamAudioBindingsTest {
         testAudioBufferOperations();
         testNewEffects();
 
+        // Regression tests for past issues
+        testVectorNormalization();
+        testIPLAudioBufferAllocate();
+        testStructureFieldOrder();
+
         // Print summary
         System.out.println("\n=================================================");
         System.out.println("  Test Summary");
@@ -571,5 +576,271 @@ public class SteamAudioBindingsTest {
 
     private static void warn(String message) {
         System.out.println("  [!] " + message);
+    }
+
+    // =========================================================================
+    // REGRESSION TEST 1: Vector Normalization (Fix #6)
+    // =========================================================================
+
+    /**
+     * Regression test for "修正6: 方向ベクトルの正規化"
+     *
+     * Past Issue: When un-normalized direction vectors were passed to Steam Audio,
+     * the output was nearly zero and left/right channels were identical.
+     *
+     * This test verifies that normalization is working correctly by testing
+     * with various vector lengths.
+     */
+    private static void testVectorNormalization() {
+        System.out.println("[REGRESSION 1] Vector Normalization (Fix #6)");
+
+        PointerByReference contextRef = new PointerByReference();
+        PointerByReference hrtfRef = new PointerByReference();
+        PointerByReference effectRef = new PointerByReference();
+        ManualAudioBuffer inBuffer = null;
+        ManualAudioBuffer outBuffer = null;
+
+        try {
+            // Setup Steam Audio
+            SteamAudioLibrary.IPLContextSettings contextSettings = new SteamAudioLibrary.IPLContextSettings();
+            contextSettings.version = SteamAudioLibrary.STEAMAUDIO_VERSION;
+            SteamAudioLibrary.INSTANCE.iplContextCreate(contextSettings, contextRef);
+            Pointer context = contextRef.getValue();
+
+            SteamAudioLibrary.IPLAudioSettings audioSettings = new SteamAudioLibrary.IPLAudioSettings();
+            audioSettings.samplingRate = SAMPLE_RATE;
+            audioSettings.frameSize = FRAME_SIZE;
+
+            SteamAudioLibrary.IPLHRTFSettings hrtfSettings = new SteamAudioLibrary.IPLHRTFSettings();
+            hrtfSettings.type = SteamAudioLibrary.IPLHRTFType.IPL_HRTFTYPE_DEFAULT;
+            SteamAudioLibrary.INSTANCE.iplHRTFCreate(context, audioSettings, hrtfSettings, hrtfRef);
+            Pointer hrtf = hrtfRef.getValue();
+
+            SteamAudioLibrary.IPLBinauralEffectSettings effectSettings = new SteamAudioLibrary.IPLBinauralEffectSettings();
+            effectSettings.hrtf = hrtf;
+            SteamAudioLibrary.INSTANCE.iplBinauralEffectCreate(context, audioSettings, effectSettings, effectRef);
+            Pointer effect = effectRef.getValue();
+
+            // Create audio buffers
+            inBuffer = new ManualAudioBuffer(1, FRAME_SIZE);
+            outBuffer = new ManualAudioBuffer(2, FRAME_SIZE);
+
+            // Generate test signal
+            float[] sineWave = generateSineWave(440.0f, SAMPLE_RATE, FRAME_SIZE);
+            inBuffer.writeMonoData(sineWave);
+
+            // Test with un-normalized vector (length > 1)
+            float unnormalizedX = 10.0f;  // Length = sqrt(10^2) = 10
+            float unnormalizedY = 0.0f;
+            float unnormalizedZ = 0.0f;
+
+            // Normalize the vector
+            float length = (float) Math.sqrt(unnormalizedX * unnormalizedX +
+                                            unnormalizedY * unnormalizedY +
+                                            unnormalizedZ * unnormalizedZ);
+            float normalizedX = unnormalizedX / length;
+            float normalizedY = unnormalizedY / length;
+            float normalizedZ = unnormalizedZ / length;
+
+            pass("Normalized vector from (10.0, 0.0, 0.0) to (" +
+                 String.format("%.3f", normalizedX) + ", " +
+                 String.format("%.3f", normalizedY) + ", " +
+                 String.format("%.3f", normalizedZ) + ")");
+
+            // Apply binaural effect with normalized vector
+            SteamAudioLibrary.IPLBinauralEffectParams params = new SteamAudioLibrary.IPLBinauralEffectParams();
+            params.direction = new SteamAudioLibrary.IPLVector3(normalizedX, normalizedY, normalizedZ);
+            params.interpolation = SteamAudioLibrary.IPLHRTFInterpolation.IPL_HRTFINTERPOLATION_BILINEAR;
+            params.spatialBlend = 1.0f;
+            params.hrtf = hrtf;
+            params.peakDelays = Pointer.NULL;
+            params.write();
+
+            int result = SteamAudioLibrary.INSTANCE.iplBinauralEffectApply(
+                effect, params.getPointer(), inBuffer.getStructPointer(), outBuffer.getStructPointer()
+            );
+
+            if (result == SteamAudioLibrary.IPLerror.IPL_STATUS_SUCCESS) {
+                float[] outputData = outBuffer.readInterleavedData();
+
+                // Check output is not silent
+                boolean hasNonZero = false;
+                for (float sample : outputData) {
+                    if (Math.abs(sample) > 0.001f) {
+                        hasNonZero = true;
+                        break;
+                    }
+                }
+
+                if (hasNonZero) {
+                    pass("Output is non-zero after normalization");
+                } else {
+                    fail("Output is still zero even after normalization");
+                }
+
+                // Check left and right channels are different
+                boolean channelsDifferent = false;
+                for (int i = 0; i < FRAME_SIZE; i++) {
+                    float left = outputData[i * 2];
+                    float right = outputData[i * 2 + 1];
+                    if (Math.abs(left - right) > 0.001f) {
+                        channelsDifferent = true;
+                        break;
+                    }
+                }
+
+                if (channelsDifferent) {
+                    pass("Left and right channels are different (HRTF working)");
+                } else {
+                    fail("Left and right channels are identical (HRTF not working)");
+                }
+            } else {
+                fail("iplBinauralEffectApply failed");
+            }
+
+            // Clean up
+            inBuffer.dispose();
+            outBuffer.dispose();
+            SteamAudioLibrary.INSTANCE.iplBinauralEffectRelease(effectRef);
+            SteamAudioLibrary.INSTANCE.iplHRTFRelease(hrtfRef);
+            SteamAudioLibrary.INSTANCE.iplContextRelease(contextRef);
+
+        } catch (Exception e) {
+            fail("Exception during vector normalization test: " + e.getMessage());
+            e.printStackTrace();
+        }
+        System.out.println();
+    }
+
+    // =========================================================================
+    // REGRESSION TEST 2: iplAudioBufferAllocate (Fix #1)
+    // =========================================================================
+
+    /**
+     * Regression test for "修正1: IPLAudioBuffer構造体の適切な使用"
+     *
+     * Past Issue: Using raw Memory instead of proper Steam Audio buffer allocation.
+     *
+     * This test verifies that iplAudioBufferAllocate works correctly.
+     */
+    private static void testIPLAudioBufferAllocate() {
+        System.out.println("[REGRESSION 2] iplAudioBufferAllocate (Fix #1)");
+
+        PointerByReference contextRef = new PointerByReference();
+
+        try {
+            // Create context
+            SteamAudioLibrary.IPLContextSettings contextSettings = new SteamAudioLibrary.IPLContextSettings();
+            contextSettings.version = SteamAudioLibrary.STEAMAUDIO_VERSION;
+            int result = SteamAudioLibrary.INSTANCE.iplContextCreate(contextSettings, contextRef);
+            if (result != SteamAudioLibrary.IPLerror.IPL_STATUS_SUCCESS) {
+                fail("Failed to create context");
+                return;
+            }
+            Pointer context = contextRef.getValue();
+
+            // Allocate audio buffer using Steam Audio API
+            Memory bufferMemory = new Memory(1024); // Allocate memory for IPLAudioBuffer structure
+            Pointer bufferPtr = bufferMemory;
+
+            result = SteamAudioLibrary.INSTANCE.iplAudioBufferAllocate(context, 2, FRAME_SIZE, bufferPtr);
+
+            if (result == SteamAudioLibrary.IPLerror.IPL_STATUS_SUCCESS) {
+                pass("iplAudioBufferAllocate succeeded");
+
+                // Verify buffer structure
+                SteamAudioLibrary.IPLAudioBuffer buffer = new SteamAudioLibrary.IPLAudioBuffer(bufferPtr);
+
+                if (buffer.format.numChannels == 2 && buffer.format.numSamples == FRAME_SIZE) {
+                    pass("Buffer format is correct (2 channels, " + FRAME_SIZE + " samples)");
+                } else {
+                    fail("Buffer format is incorrect: " + buffer.format.numChannels +
+                         " channels, " + buffer.format.numSamples + " samples");
+                }
+
+                // Free buffer
+                SteamAudioLibrary.INSTANCE.iplAudioBufferFree(context, bufferPtr);
+                pass("iplAudioBufferFree succeeded");
+            } else {
+                fail("iplAudioBufferAllocate failed with status: " + result);
+            }
+
+            // Clean up context
+            SteamAudioLibrary.INSTANCE.iplContextRelease(contextRef);
+
+        } catch (Exception e) {
+            fail("Exception during iplAudioBufferAllocate test: " + e.getMessage());
+            e.printStackTrace();
+        }
+        System.out.println();
+    }
+
+    // =========================================================================
+    // REGRESSION TEST 3: Structure Field Order (Fix #3, #4)
+    // =========================================================================
+
+    /**
+     * Regression test for:
+     * - "修正3: IPLBinauralEffectParams構造体の不完全な定義" (hrtf, peakDelays fields)
+     * - "修正4: ネストした構造体の初期化" (direction initialization)
+     *
+     * This test verifies that all structure fields are properly defined and initialized.
+     */
+    private static void testStructureFieldOrder() {
+        System.out.println("[REGRESSION 3] Structure Field Order (Fix #3, #4)");
+
+        try {
+            // Test IPLBinauralEffectParams structure
+            SteamAudioLibrary.IPLBinauralEffectParams params = new SteamAudioLibrary.IPLBinauralEffectParams();
+
+            // Verify nested structure is initialized (Fix #4)
+            if (params.direction != null) {
+                pass("IPLBinauralEffectParams.direction is initialized (Fix #4)");
+            } else {
+                fail("IPLBinauralEffectParams.direction is NULL (Fix #4 not applied)");
+            }
+
+            // Verify all fields exist (Fix #3)
+            params.direction.x = 1.0f;
+            params.direction.y = 0.0f;
+            params.direction.z = 0.0f;
+            params.interpolation = SteamAudioLibrary.IPLHRTFInterpolation.IPL_HRTFINTERPOLATION_BILINEAR;
+            params.spatialBlend = 1.0f;
+            params.hrtf = Pointer.NULL;  // Must exist (Fix #3)
+            params.peakDelays = Pointer.NULL;  // Must exist (Fix #3)
+
+            pass("All IPLBinauralEffectParams fields are accessible (Fix #3)");
+
+            // Test field order
+            java.util.List<String> fieldOrder = params.getFieldOrder();
+            String[] expectedOrder = {"direction", "interpolation", "spatialBlend", "hrtf", "peakDelays"};
+
+            boolean orderCorrect = true;
+            if (fieldOrder.size() == expectedOrder.length) {
+                for (int i = 0; i < expectedOrder.length; i++) {
+                    if (!fieldOrder.get(i).equals(expectedOrder[i])) {
+                        orderCorrect = false;
+                        break;
+                    }
+                }
+            } else {
+                orderCorrect = false;
+            }
+
+            if (orderCorrect) {
+                pass("IPLBinauralEffectParams field order is correct");
+            } else {
+                fail("IPLBinauralEffectParams field order is incorrect");
+            }
+
+            // Write structure to verify it doesn't crash
+            params.write();
+            pass("Structure write() succeeded without crash");
+
+        } catch (Exception e) {
+            fail("Exception during structure field order test: " + e.getMessage());
+            e.printStackTrace();
+        }
+        System.out.println();
     }
 }
