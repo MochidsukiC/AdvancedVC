@@ -52,11 +52,10 @@ public class AudioPlayerSteamAudio {
         final LinkedBlockingQueue<short[]> audioQueue = new LinkedBlockingQueue<>(50);
         Pointer binauralEffect = null;
 
-        // Steam Audioバッファ（再利用）
-        SteamAudioLibrary.IPLAudioBuffer inBuffer = null;
-        SteamAudioLibrary.IPLAudioBuffer outBuffer = null;
-        Pointer inBufferData = null;
-        Pointer outBufferData = null;
+        // Steam Audioバッファ（iplAudioBufferAllocate使用）
+        // ネイティブメモリへの直接ポインタを保持
+        Pointer inBufferPtr = null;
+        Pointer outBufferPtr = null;
 
         PlayerAudioSource(Pointer binauralEffect) {
             this.binauralEffect = binauralEffect;
@@ -65,41 +64,57 @@ public class AudioPlayerSteamAudio {
 
         private void allocateBuffers() {
             try {
-                // 入力バッファ（モノラル）
-                inBuffer = new SteamAudioLibrary.IPLAudioBuffer();
-                inBuffer.numChannels = 1;
-                inBuffer.numSamples = AudioConstants.FRAME_SIZE;
-                inBuffer.write();
+                // 入力バッファ（モノラル）- iplAudioBufferAllocateを使用
+                // ネイティブメモリを確保（IPLAudioBuffer構造体用）
+                inBufferPtr = new com.sun.jna.Memory(16);  // 16バイト（int+int+Pointer）
+                int result = SteamAudioLibrary.INSTANCE.iplAudioBufferAllocate(
+                    context,
+                    1,  // モノラル
+                    AudioConstants.FRAME_SIZE,
+                    inBufferPtr
+                );
 
-                int result = SteamAudioLibrary.INSTANCE.iplAudioBufferAllocate(context, 1, AudioConstants.FRAME_SIZE, inBuffer.getPointer());
                 if (result != SteamAudioLibrary.IPLerror.IPL_STATUS_SUCCESS) {
                     LOGGER.error("Failed to allocate input buffer. Error code: {}", result);
                     return;
                 }
-                inBuffer.read();
-                inBufferData = inBuffer.data;
 
-                LOGGER.debug("Input buffer allocated: numChannels={}, numSamples={}, data pointer={}",
-                    inBuffer.numChannels, inBuffer.numSamples, inBuffer.data);
+                // 構造体の値を確認（デバッグ用）
+                int inChannels = inBufferPtr.getInt(0);
+                int inSamples = inBufferPtr.getInt(4);
+                Pointer inDataPtr = inBufferPtr.getPointer(8);
+                LOGGER.info("Input buffer allocated: channels={}, samples={}, data={}", inChannels, inSamples, inDataPtr);
 
-                // 出力バッファ（ステレオ）
-                outBuffer = new SteamAudioLibrary.IPLAudioBuffer();
-                outBuffer.numChannels = 2;
-                outBuffer.numSamples = AudioConstants.FRAME_SIZE;
-                outBuffer.write();
+                if (inDataPtr == null || Pointer.nativeValue(inDataPtr) == 0) {
+                    LOGGER.error("CRITICAL: Input buffer data pointer is NULL after iplAudioBufferAllocate!");
+                }
 
-                result = SteamAudioLibrary.INSTANCE.iplAudioBufferAllocate(context, 2, AudioConstants.FRAME_SIZE, outBuffer.getPointer());
+                // 出力バッファ（ステレオ）- iplAudioBufferAllocateを使用
+                // ネイティブメモリを確保（IPLAudioBuffer構造体用）
+                outBufferPtr = new com.sun.jna.Memory(16);  // 16バイト（int+int+Pointer）
+                result = SteamAudioLibrary.INSTANCE.iplAudioBufferAllocate(
+                    context,
+                    2,  // ステレオ
+                    AudioConstants.FRAME_SIZE,
+                    outBufferPtr
+                );
+
                 if (result != SteamAudioLibrary.IPLerror.IPL_STATUS_SUCCESS) {
                     LOGGER.error("Failed to allocate output buffer. Error code: {}", result);
                     return;
                 }
-                outBuffer.read();
-                outBufferData = outBuffer.data;
 
-                LOGGER.debug("Output buffer allocated: numChannels={}, numSamples={}, data pointer={}",
-                    outBuffer.numChannels, outBuffer.numSamples, outBuffer.data);
+                // 構造体の値を確認（デバッグ用）
+                int outChannels = outBufferPtr.getInt(0);
+                int outSamples = outBufferPtr.getInt(4);
+                Pointer outDataPtr = outBufferPtr.getPointer(8);
+                LOGGER.info("Output buffer allocated: channels={}, samples={}, data={}", outChannels, outSamples, outDataPtr);
 
-                LOGGER.debug("Allocated Steam Audio buffers successfully");
+                if (outDataPtr == null || Pointer.nativeValue(outDataPtr) == 0) {
+                    LOGGER.error("CRITICAL: Output buffer data pointer is NULL after iplAudioBufferAllocate!");
+                }
+
+                LOGGER.info("Allocated Steam Audio buffers successfully using iplAudioBufferAllocate");
 
             } catch (Exception e) {
                 LOGGER.error("Failed to allocate Steam Audio buffers", e);
@@ -107,25 +122,25 @@ public class AudioPlayerSteamAudio {
         }
 
         void cleanup() {
-            // バッファのクリーンアップ
-            if (inBuffer != null && context != null) {
+            // バッファのクリーンアップ - iplAudioBufferFreeを使用
+            if (inBufferPtr != null) {
                 try {
-                    SteamAudioLibrary.INSTANCE.iplAudioBufferFree(context, inBuffer.getPointer());
+                    SteamAudioLibrary.INSTANCE.iplAudioBufferFree(context, inBufferPtr);
                     LOGGER.debug("Freed input buffer");
                 } catch (Exception e) {
                     LOGGER.error("Failed to free input buffer", e);
                 }
-                inBuffer = null;
+                inBufferPtr = null;
             }
 
-            if (outBuffer != null && context != null) {
+            if (outBufferPtr != null) {
                 try {
-                    SteamAudioLibrary.INSTANCE.iplAudioBufferFree(context, outBuffer.getPointer());
+                    SteamAudioLibrary.INSTANCE.iplAudioBufferFree(context, outBufferPtr);
                     LOGGER.debug("Freed output buffer");
                 } catch (Exception e) {
                     LOGGER.error("Failed to free output buffer", e);
                 }
-                outBuffer = null;
+                outBufferPtr = null;
             }
 
             // エフェクトのクリーンアップ
@@ -444,7 +459,7 @@ public class AudioPlayerSteamAudio {
                 return;
             }
 
-            if (source.inBuffer == null || source.outBuffer == null) {
+            if (source.inBufferPtr == null || source.outBufferPtr == null) {
                 LOGGER.warn("Steam Audio buffers not allocated for player {}", playerId);
                 return;
             }
@@ -493,8 +508,9 @@ public class AudioPlayerSteamAudio {
 
                 LOGGER.debug("Direction: ({}, {}, {})", relativeX, relativeY, relativeZ);
 
-                // === Step 3: Steam Audioバッファに書き込み（deinterleave） ===
-                SteamAudioLibrary.INSTANCE.iplAudioBufferDeinterleave(context, inputSamples, source.inBuffer.getPointer());
+                // === Step 3: Steam Audioバッファに書き込み（iplAudioBufferDeinterleaveを使用） ===
+                SteamAudioLibrary.INSTANCE.iplAudioBufferDeinterleave(context, inputSamples, source.inBufferPtr);
+                LOGGER.debug("Wrote input samples to buffer using iplAudioBufferDeinterleave");
 
                 // === Step 4: バイノーラルエフェクトパラメータ設定 ===
                 SteamAudioLibrary.IPLVector3 iplDirection = new SteamAudioLibrary.IPLVector3(relativeX, relativeY, relativeZ);
@@ -505,22 +521,13 @@ public class AudioPlayerSteamAudio {
                 params.write();
 
                 // === Step 5: バイノーラルエフェクトを適用 ===
-                // Note: バッファ構造体は iplAudioBufferAllocate 後に read() で読み取り済み
-                // data ポインタは変更していないので write() は不要
-
-                // ネイティブメモリから構造体の内容を再読み込み
-                source.inBuffer.read();
-                source.outBuffer.read();
-
-                LOGGER.debug("Calling iplBinauralEffectApply: inBuffer(ch={}, samples={}, data={}), outBuffer(ch={}, samples={}, data={})",
-                    source.inBuffer.numChannels, source.inBuffer.numSamples, source.inBuffer.data,
-                    source.outBuffer.numChannels, source.outBuffer.numSamples, source.outBuffer.data);
+                LOGGER.debug("Calling iplBinauralEffectApply with IPLAudioBuffer");
 
                 int result = SteamAudioLibrary.INSTANCE.iplBinauralEffectApply(
                         source.binauralEffect,
                         params,
-                        source.inBuffer.getPointer(),
-                        source.outBuffer.getPointer()
+                        source.inBufferPtr,
+                        source.outBufferPtr
                 );
 
                 if (result != SteamAudioLibrary.IPLerror.IPL_STATUS_SUCCESS) {
@@ -530,9 +537,10 @@ public class AudioPlayerSteamAudio {
 
                 LOGGER.debug("Binaural effect applied successfully for player {}", playerId);
 
-                // === Step 6: Steam Audioバッファから読み取り（interleave） ===
-                float[] outputSamples = new float[AudioConstants.FRAME_SIZE * 2]; // ステレオ
-                SteamAudioLibrary.INSTANCE.iplAudioBufferInterleave(context, source.outBuffer.getPointer(), outputSamples);
+                // === Step 6: Steam Audioバッファから読み取り（iplAudioBufferInterleaveを使用） ===
+                float[] outputSamples = new float[AudioConstants.FRAME_SIZE * 2];  // ステレオ
+                SteamAudioLibrary.INSTANCE.iplAudioBufferInterleave(context, source.outBufferPtr, outputSamples);
+                LOGGER.debug("Read output samples using iplAudioBufferInterleave");
 
                 // 出力サンプルの最初のいくつかをログに出力（デバッグ用）
                 if (LOGGER.isDebugEnabled() && outputSamples.length > 10) {

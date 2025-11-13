@@ -47,6 +47,16 @@ public class MicrophoneCapture {
             return;
         }
 
+        // macOS環境ではマイク許可を要求
+        if (MacOSPermissionHelper.isMacOS()) {
+            LOGGER.info("Detected macOS environment - checking microphone permission");
+            if (!MacOSPermissionHelper.requestMicrophonePermission()) {
+                LOGGER.error("Microphone permission not granted on macOS");
+                MacOSPermissionHelper.showMacOSPermissionWarning();
+                return;
+            }
+        }
+
         try {
             // 利用可能なマイクデバイスをログに出力
             logAvailableAudioDevices();
@@ -95,6 +105,12 @@ public class MicrophoneCapture {
             LOGGER.info("Microphone capture started");
         } catch (LineUnavailableException e) {
             LOGGER.error("Failed to start microphone capture", e);
+
+            // macOS環境ではマイク許可が必要な可能性を案内
+            if (MacOSPermissionHelper.isMacOS()) {
+                LOGGER.error("Microphone access failed on macOS - permission may be required");
+                MacOSPermissionHelper.showMacOSPermissionWarning();
+            }
         }
     }
 
@@ -134,10 +150,18 @@ public class MicrophoneCapture {
         int frameSizeBytes = AudioConstants.FRAME_SIZE * AudioConstants.CHANNELS * 2;
         byte[] buffer = new byte[frameSizeBytes];
 
+        LOGGER.info("Microphone capture loop started");
+        int frameCount = 0;
+
         while (running.get()) {
             try {
                 // マイクからデータを読み取り
                 int bytesRead = microphone.read(buffer, 0, buffer.length);
+
+                if (frameCount < 5) {
+                    LOGGER.info("Microphone read: {} bytes (frame {})", bytesRead, frameCount);
+                    frameCount++;
+                }
 
                 if (bytesRead > 0) {
                     // byte[] → short[] に変換

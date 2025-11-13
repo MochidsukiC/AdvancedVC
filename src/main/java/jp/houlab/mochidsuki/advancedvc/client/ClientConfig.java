@@ -34,8 +34,10 @@ public class ClientConfig {
     public String volumeLevel = "NORMAL"; // 声量レベル（WHISPER, QUIET, NORMAL, LOUD, SHOUT）
     public boolean visualizeRays = false; // レイ可視化（デバッグ表示）
     // Steam Audio使用（Phase 1: バイノーラル再生）
-    // ARM64環境ではJNAのfloat**ポインタ処理に制限があるため、OpenAL EFXを使用
-    // x64環境ではSteam Audioで高品質なHRTFが利用可能
+    // ARM64環境ではSteam Audio自体のバグによりクラッシュするため、OpenAL EFXを使用
+    // iplAudioBufferAllocateは成功し、dataポインタも設定されるが、
+    // iplBinauralEffectApplyでdataポインタの間接参照時にNULLポインタでクラッシュ
+    // これはSteam Audio v4.7.0のARM64実装のバグと判断
     public boolean useSteamAudio = !isArmArchitecture();
 
     /**
@@ -44,12 +46,9 @@ public class ClientConfig {
      */
     private static boolean isArmArchitecture() {
         String arch = System.getProperty("os.arch", "").toLowerCase();
-        boolean isArm = arch.contains("arm") || arch.contains("aarch");
-        if (isArm) {
-            LOGGER.info("Detected ARM architecture ({}), using OpenAL EFX instead of Steam Audio", arch);
-        }
-        return isArm;
+        return arch.contains("arm") || arch.contains("aarch");
     }
+
 
     public static synchronized ClientConfig get() {
         if (INSTANCE == null) {
@@ -87,6 +86,16 @@ public class ClientConfig {
                     this.useSteamAudio = loaded.useSteamAudio;
                 }
             }
+
+            // ARM環境では設定ファイルの値に関わらず強制的にSteam Audioを無効化
+            if (isArmArchitecture()) {
+                if (this.useSteamAudio) {
+                    LOGGER.warn("Steam Audio is not supported on ARM64 architecture. Forcing useSteamAudio=false and using OpenAL EFX instead.");
+                    this.useSteamAudio = false;
+                    save(); // 設定を更新して保存
+                }
+            }
+
         } catch (Exception e) {
             LOGGER.warn("Failed to load client config, using defaults", e);
         }
