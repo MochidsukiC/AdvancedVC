@@ -1667,6 +1667,141 @@ src/main/java/jp/houlab/mochidsuki/advancedvc/client/audio/steamaudio/
 - 実際のプログラムへの統合は今後のフェーズで実施予定
 - 現在の実装（Phase 1）はバイノーラルエフェクトのみ使用
 
+### テストプログラムの実装（2025-11-13完了） ✅
+
+**目的**:
+Steam Audio Javaバインディングが正しく動作するか検証するため、統合テストプログラムを作成しました。
+
+**実装ファイル**:
+```
+src/test/java/jp/houlab/mochidsuki/advancedvc/client/audio/steamaudio/
+├── SteamAudioBindingsTest.java  (24KB, 約680行) - 統合テストプログラム
+└── README.md                    (5.6KB) - テスト実行手順書
+```
+
+**テスト項目** (全8項目):
+
+1. **Native Library Loading** - ネイティブライブラリの読み込みテスト
+   - `NativeLibraryLoader.loadSteamAudio()`の動作確認
+   - プラットフォーム自動検出の確認
+
+2. **Context Initialization** - Contextの作成と解放
+   - `iplContextCreate/Release`のライフサイクル
+   - リソース管理の正常性確認
+
+3. **HRTF Creation** - HRTFの作成と解放
+   - デフォルトHRTFの初期化
+   - `iplHRTFCreate/Release`の動作確認
+
+4. **Binaural Effect** - バイノーラルエフェクトの初期化
+   - `iplBinauralEffectCreate/Release`の動作確認
+   - エフェクト作成の正常性確認
+
+5. **Audio Processing (Sine Wave)** - 実際の音声処理テスト ⭐ 重要
+   - 440Hz サイン波（A4音）を入力
+   - バイノーラルエフェクトを適用（音源を右側に配置）
+   - 出力が非ゼロであることを確認
+   - 左右チャンネルのエネルギー比較（右 > 左）
+   - **空間定位の正確性を検証**
+
+6. **Scene/Mesh API (Basic)** - 新しく追加したAPIのテスト
+   - `iplSceneCreate/Commit/Release`の動作確認
+   - Scene管理機能の基本動作確認
+
+7. **Audio Buffer Operations** - バッファ読み書きテスト
+   - `ManualAudioBuffer`のwrite/read機能
+   - データ整合性の検証（書き込みと読み取りが一致）
+
+8. **New Effects API (Panning)** - 新エフェクトのテスト
+   - `iplPanningEffectCreate/Release`の動作確認
+   - Phase 2で追加したAPIの動作確認
+
+**テスト実行方法**:
+
+テストは以下の3つの方法で実行できます：
+
+```bash
+# 方法1: Gradle（推奨）
+./gradlew :runSteamAudioTest
+
+# 方法2: Java直接実行
+java -Djna.library.path=/path/to/steamaudio/lib \
+     -cp "build/classes/java/main:src/test/java:lib/*" \
+     jp.houlab.mochidsuki.advancedvc.client.audio.steamaudio.SteamAudioBindingsTest
+
+# 方法3: IDEから実行
+# SteamAudioBindingsTest.javaのmainメソッドを実行
+# VM Options: -Djna.library.path=/path/to/steamaudio/lib
+```
+
+**期待される出力**:
+```
+=================================================
+  Steam Audio Java Bindings Integration Test
+=================================================
+
+[TEST 1] Native Library Loading
+  [✓] Native library loaded successfully
+
+[TEST 2] Context Initialization
+  [✓] Context created successfully
+  [✓] Context released successfully
+
+[TEST 3] HRTF Creation
+  [✓] HRTF created successfully
+  [✓] HRTF released successfully
+
+[TEST 4] Binaural Effect
+  [✓] Binaural effect created successfully
+  [✓] Binaural effect released successfully
+
+[TEST 5] Audio Processing (Sine Wave)
+  [✓] Generated 440Hz sine wave input
+  [✓] Binaural effect applied successfully
+  [✓] Output contains non-zero samples (audio processed)
+  Left channel energy:  XXX.XXXXXX
+  Right channel energy: XXX.XXXXXX
+  [✓] Spatial positioning correct (right > left)
+
+[TEST 6] Scene/Mesh API (Basic)
+  [✓] Scene created successfully
+  [✓] Scene committed successfully
+  [✓] Scene released successfully
+
+[TEST 7] Audio Buffer Operations
+  [✓] Write interleaved data to buffer
+  [✓] Read interleaved data from buffer
+  [✓] Data integrity verified (write/read match)
+
+[TEST 8] New Effects API (Panning)
+  [✓] Panning effect created successfully
+  [✓] Panning effect released successfully
+
+=================================================
+  Test Summary
+=================================================
+Tests Passed: 18
+Tests Failed: 0
+Total Tests:  18
+
+Result: ALL TESTS PASSED ✓
+```
+
+**テストの特徴**:
+- スタンドアロン実行可能（JUnit依存なし）
+- 各テストは独立して実行される
+- エラー時は詳細なスタックトレースを出力
+- 成功/失敗のカウントを自動集計
+- 音声処理の正確性を数値で検証（左右チャンネルエネルギー比較）
+
+**注意事項**:
+- Steam Audio v4.7.0のネイティブライブラリが必要
+- ARM64環境（Apple Silicon）では一部テストが失敗する可能性あり（Steam Audio側の既知のバグ）
+- テスト実行には約5-10秒かかります
+
+**次のステップ**:
+ユーザー環境（Windows x64推奨）でテストを実行し、全テストが成功することを確認してください。
+
 ---
 ## 仕様（更新）
 
