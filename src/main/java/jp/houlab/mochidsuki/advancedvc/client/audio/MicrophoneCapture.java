@@ -47,14 +47,11 @@ public class MicrophoneCapture {
             return;
         }
 
-        // macOS環境ではマイク許可を要求
+        // macOS環境では許可が必要な旨をログに記録（警告のみ、初期化は継続）
         if (MacOSPermissionHelper.isMacOS()) {
-            LOGGER.info("Detected macOS environment - checking microphone permission");
-            if (!MacOSPermissionHelper.requestMicrophonePermission()) {
-                LOGGER.error("Microphone permission not granted on macOS");
-                MacOSPermissionHelper.showMacOSPermissionWarning();
-                return;
-            }
+            LOGGER.info("Detected macOS environment");
+            LOGGER.info("Note: Microphone permission must be granted in System Preferences > Privacy & Security > Microphone");
+            LOGGER.info("If microphone does not work, please check System Preferences and grant permission to the launcher (Prism Launcher, etc.)");
         }
 
         try {
@@ -92,8 +89,15 @@ public class MicrophoneCapture {
                 LOGGER.info("Using microphone device: {}", microphone.getLineInfo().toString());
             }
 
+            LOGGER.info("Opening microphone with buffer size: {}", AudioConstants.NETWORK_BUFFER_SIZE);
             microphone.open(audioFormat, AudioConstants.NETWORK_BUFFER_SIZE);
+            LOGGER.info("Microphone opened successfully, line info: {}", microphone.getLineInfo());
+            LOGGER.info("Microphone isOpen: {}, isActive: {}", microphone.isOpen(), microphone.isActive());
+
+            LOGGER.info("Starting microphone...");
             microphone.start();
+            LOGGER.info("Microphone started successfully");
+            LOGGER.info("Microphone isOpen: {}, isActive: {}", microphone.isOpen(), microphone.isActive());
 
             running.set(true);
 
@@ -104,11 +108,25 @@ public class MicrophoneCapture {
 
             LOGGER.info("Microphone capture started");
         } catch (LineUnavailableException e) {
-            LOGGER.error("Failed to start microphone capture", e);
+            LOGGER.error("Failed to start microphone capture: {}", e.getMessage());
+            LOGGER.error("Stack trace:", e);
 
             // macOS環境ではマイク許可が必要な可能性を案内
             if (MacOSPermissionHelper.isMacOS()) {
-                LOGGER.error("Microphone access failed on macOS - permission may be required");
+                LOGGER.error("=====================================");
+                LOGGER.error("Microphone access failed on macOS");
+                LOGGER.error("=====================================");
+                LOGGER.error("This usually means microphone permission is not granted.");
+                LOGGER.error("");
+                LOGGER.error("Please check:");
+                LOGGER.error("1. Open System Preferences > Privacy & Security > Microphone");
+                LOGGER.error("2. Ensure your launcher (Prism Launcher, Minecraft, or java) is checked");
+                LOGGER.error("3. Restart Minecraft completely");
+                LOGGER.error("");
+                LOGGER.error("For detailed instructions, see: README_MACOS.md");
+                LOGGER.error("=====================================");
+
+                // ゲーム内にも通知
                 MacOSPermissionHelper.showMacOSPermissionWarning();
             }
         }
@@ -120,6 +138,13 @@ public class MicrophoneCapture {
     public void stop() {
         if (!running.get()) {
             return;
+        }
+
+        // 誰がstopを呼んだのかスタックトレースをログに出力（デバッグ用）
+        LOGGER.info("Microphone stop() called from:");
+        StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+        for (int i = 2; i < Math.min(stackTrace.length, 8); i++) {
+            LOGGER.info("  at {}", stackTrace[i]);
         }
 
         running.set(false);
@@ -159,7 +184,13 @@ public class MicrophoneCapture {
                 int bytesRead = microphone.read(buffer, 0, buffer.length);
 
                 if (frameCount < 5) {
-                    LOGGER.info("Microphone read: {} bytes (frame {})", bytesRead, frameCount);
+                    // データの内容を確認（最初の10サンプル）
+                    StringBuilder samplePreview = new StringBuilder();
+                    for (int i = 0; i < Math.min(20, bytesRead); i++) {
+                        samplePreview.append(String.format("%02X ", buffer[i]));
+                    }
+                    LOGGER.info("Microphone read: {} bytes (frame {}), first bytes: {}", bytesRead, frameCount, samplePreview.toString());
+                    LOGGER.info("Microphone isOpen: {}, isActive: {}", microphone.isOpen(), microphone.isActive());
                     frameCount++;
                 }
 
@@ -277,11 +308,11 @@ public class MicrophoneCapture {
     }
 
     /**
-     * 入力ゲインを設定（0.0～2.0、1.0が標準）
+     * 入力ゲインを設定（0.0～4.0、1.0が標準）
      */
     public void setInputGain(double gain) {
-        // ゲインの範囲を制限（0.0～2.0）
-        this.inputGain = Math.max(0.0, Math.min(2.0, gain));
+        // ゲインの範囲を制限（0.0～4.0、最大400%）
+        this.inputGain = Math.max(0.0, Math.min(4.0, gain));
         LOGGER.info("Input gain set to: {}", this.inputGain);
     }
 

@@ -698,21 +698,35 @@ public class ClientAudioEngine {
      * 現在稼働中のエンジンに対して、設定中の入出力デバイスを適用する。
      * マイク/出力のラインを安全に張り替えるために、それぞれ個別に再初期化する。
      */
-    public void applySelectedAudioDevicesFromConfig() {
+    public synchronized void applySelectedAudioDevicesFromConfig() {
+        LOGGER.info("applySelectedAudioDevicesFromConfig called - starting device reconfiguration");
+        MicrophoneCapture newMic = null;
+        boolean micStarted = false;
+
         try {
             jp.houlab.mochidsuki.advancedvc.client.ClientConfig cfg = jp.houlab.mochidsuki.advancedvc.client.ClientConfig.get();
 
             // マイクを差し替え
             MicrophoneCapture oldMic = this.microphone;
-            MicrophoneCapture newMic = new MicrophoneCapture();
+            newMic = new MicrophoneCapture();
             if (cfg.inputDevice != null && !cfg.inputDevice.isBlank()) {
                 newMic.setPreferredMixerName(cfg.inputDevice);
             }
+            LOGGER.info("Starting new microphone...");
             newMic.start();
+            micStarted = newMic.isRunning();
+            LOGGER.info("New microphone started: {}", micStarted);
+
             newMic.setInputGain(cfg.inputVolume);
             this.microphone = newMic;
+
             if (oldMic != null) {
-                try { oldMic.stop(); } catch (Exception ignored) {}
+                try {
+                    LOGGER.info("Stopping old microphone...");
+                    oldMic.stop();
+                } catch (Exception e) {
+                    LOGGER.warn("Failed to stop old microphone", e);
+                }
             }
 
             // 出力プレイヤーを差し替え
@@ -745,9 +759,23 @@ public class ClientAudioEngine {
                 this.usingSteamAudio = false;
             }
 
-            LOGGER.info("Applied selected audio devices (mic/output) from client config");
+            // マイクが正常に動作しているか確認
+            if (this.microphone != null && this.microphone.isRunning()) {
+                LOGGER.info("Applied selected audio devices (mic/output) from client config - Microphone is running");
+            } else {
+                LOGGER.error("Applied selected audio devices but microphone is NOT running!");
+            }
         } catch (Exception e) {
-            LOGGER.warn("Failed to apply selected audio devices from config", e);
+            LOGGER.error("Failed to apply selected audio devices from config", e);
+            // 例外が発生してもマイクが起動していない場合は再試行
+            if (newMic != null && !micStarted) {
+                try {
+                    LOGGER.warn("Retrying microphone start due to exception...");
+                    newMic.start();
+                } catch (Exception retryException) {
+                    LOGGER.error("Failed to retry microphone start", retryException);
+                }
+            }
         }
     }
 

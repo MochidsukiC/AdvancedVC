@@ -588,10 +588,10 @@ public class AudioPlayerSteamAudio {
     }
 
     /**
-     * 出力ゲインを設定（0.0～2.0）
+     * 出力ゲインを設定（0.0～4.0、最大400%）
      */
     public void setOutputGain(double gain) {
-        this.outputGain = Math.max(0.0, Math.min(2.0, gain));
+        this.outputGain = Math.max(0.0, Math.min(4.0, gain));
         LOGGER.info("Output gain set to: {}", this.outputGain);
     }
 }

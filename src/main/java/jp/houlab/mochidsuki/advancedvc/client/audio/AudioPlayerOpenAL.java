@@ -681,12 +681,12 @@ public class AudioPlayerOpenAL {
     }
 
     /**
-     * 出力ゲインを設定
+     * 出力ゲインを設定（0.0～4.0、最大400%）
      */
     public void setOutputGain(double gain) {
-        // OpenALのマスターゲイン設定
+        // OpenALのマスターゲイン設定（0.0～4.0）
         if (running) {
-            alListenerf(AL_GAIN, (float) Math.max(0.0, Math.min(1.0, gain)));
+            alListenerf(AL_GAIN, (float) Math.max(0.0, Math.min(4.0, gain)));
         }
     }
 

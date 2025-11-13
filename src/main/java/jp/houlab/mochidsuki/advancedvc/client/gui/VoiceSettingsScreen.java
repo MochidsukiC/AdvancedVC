@@ -43,6 +43,7 @@ public class VoiceSettingsScreen extends Screen {
     private VolumeSlider outputVolumeSlider;
     private volatile boolean micTesting = false;
     private Thread micTestThread;
+    private boolean settingsApplied = false; // 設定適用済みフラグ
 
     public VoiceSettingsScreen(Screen lastScreen) {
         super(Component.literal("VC設定"));
@@ -116,6 +117,9 @@ public class VoiceSettingsScreen extends Screen {
 
     @Override
     protected void init() {
+        // 設定適用フラグをリセット（画面が開かれるたびにリセット）
+        settingsApplied = false;
+
         int centerX = this.width / 2;
         int startY = 60;
         int buttonWidth = 200;
@@ -204,11 +208,22 @@ public class VoiceSettingsScreen extends Screen {
      * 設定を適用
      */
     private void applySettings() {
+        // 既に適用済みの場合は何もしない（複数回呼び出し防止）
+        if (settingsApplied) {
+            return;
+        }
+        settingsApplied = true;
+
         ClientAudioEngine engine = ClientAudioEngine.getInstance();
 
         // VAD閾値を更新・保存
         vadThreshold = vadSlider.getThreshold();
         ClientConfig cfg = ClientConfig.get();
+
+        // 現在の設定を保存
+        String oldInputDevice = cfg.inputDevice;
+        String oldOutputDevice = cfg.outputDevice;
+
         cfg.vadThreshold = vadThreshold;
 
         // 音量を更新
@@ -229,7 +244,13 @@ public class VoiceSettingsScreen extends Screen {
             engine.updateVadThreshold(vadThreshold);
             engine.updateInputVolume(inputVolume);
             engine.updateOutputVolume(outputVolume);
-            engine.applySelectedAudioDevicesFromConfig();
+
+            // デバイスが変更された場合のみ再初期化
+            boolean deviceChanged = !java.util.Objects.equals(oldInputDevice, cfg.inputDevice) ||
+                                   !java.util.Objects.equals(oldOutputDevice, cfg.outputDevice);
+            if (deviceChanged) {
+                engine.applySelectedAudioDevicesFromConfig();
+            }
         }
 
         // 注意: デバイス変更は次回エンジン起動時に反映されます
@@ -401,14 +422,16 @@ public class VoiceSettingsScreen extends Screen {
     }
 
     /**
-     * ボリュームスライダー
+     * ボリュームスライダー（0～400%対応）
      */
     private class VolumeSlider extends AbstractSliderButton {
         private final Component label;
         private double volume;
+        private static final double MAX_VOLUME = 4.0; // 最大400%
 
         public VolumeSlider(int x, int y, int width, int height, Component label, double initialVolume) {
-            super(x, y, width, height, Component.empty(), initialVolume);
+            // valueは0.0～1.0の範囲なので、initialVolume / MAX_VOLUMEで正規化
+            super(x, y, width, height, Component.empty(), Math.min(initialVolume / MAX_VOLUME, 1.0));
             this.label = label;
             this.volume = initialVolume;
             updateMessage();
@@ -421,7 +444,8 @@ public class VoiceSettingsScreen extends Screen {
 
         @Override
         protected void applyValue() {
-            this.volume = this.value;
+            // valueは0.0～1.0なので、MAX_VOLUMEを掛けて0.0～4.0に変換
+            this.volume = this.value * MAX_VOLUME;
             updateMessage();
             // Realtime apply
             if (VoiceSettingsScreen.this.inputVolumeSlider == this) {
@@ -437,7 +461,8 @@ public class VoiceSettingsScreen extends Screen {
 
         public void setVolume(double volume) {
             this.volume = volume;
-            this.value = volume;
+            // valueは0.0～1.0の範囲なので、MAX_VOLUMEで割って正規化
+            this.value = Math.min(volume / MAX_VOLUME, 1.0);
             updateMessage();
         }
     }
